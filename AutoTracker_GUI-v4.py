@@ -96,6 +96,42 @@ def _win_has_vc_redist() -> bool:
     except Exception:
         return False
 
+def _win_ensure_vc_redist(sources_dir: Path, log):
+    try:
+        if not _win_has_vc_redist():
+            log("[INSTALL] VC++ Redistributable fehlt -> lade und installiere…")
+            vc_url = "https://aka.ms/vs/17/release/vc_redist.x64.exe"
+            from urllib.parse import urlsplit
+            vc_exe = sources_dir / Path(urlsplit(vc_url).path).name
+            download_file(vc_url, vc_exe, log)
+            cmd = [str(vc_exe), "/install", "/quiet", "/norestart"]
+            try:
+                subprocess.run(" ".join(f'\"{c}\"' for c in cmd), shell=True, check=False)
+            except Exception as e:
+                log(f"[INSTALL] Warnung: VC++ Installer konnte nicht gestartet werden: {e}")
+            if _win_has_vc_redist():
+                log("[INSTALL] VC++ Redistributable installiert.")
+            else:
+                log("[INSTALL] Warnung: VC++ Redistributable scheint noch zu fehlen.")
+        else:
+            log("[INSTALL] VC++ Redistributable bereits vorhanden.")
+    except Exception as e:
+        log(f"[INSTALL] Warnung: VC++ Prüfung/Installation fehlgeschlagen: {e}")
+
+def ensure_vc_redist():
+    if os.name != "nt" or _win_has_vc_redist():
+        return
+    import tkinter as tk
+    from tkinter import messagebox
+    lang = detect_lang(); S = I18N.get(lang, I18N["en"])
+    root = tk.Tk(); root.withdraw()
+    if messagebox.askyesno(S["dlg_vcredist_title"], S["dlg_vcredist_msg"]):
+        _win_ensure_vc_redist(Path.cwd(), lambda msg: None)
+    else:
+        messagebox.showinfo(S["dlg_vcredist_title"], S["dlg_vcredist_info"])
+        sys.exit()
+    root.destroy()
+
 # -*- coding: utf-8 -*-
 """
 AutoTracker GUI (Python) – Cross-Platform (preferred layout)
@@ -206,6 +242,9 @@ I18N = {
         "about_title": "Info",
         "about_text": "Basiert auf dem Script von ",
         "about_link": "Polyfjord",
+        "dlg_vcredist_title": "VC++ Runtime fehlt",
+        "dlg_vcredist_msg": "Die Microsoft VC++ Runtime scheint zu fehlen. Jetzt installieren?",
+        "dlg_vcredist_info": "Die VC++ Runtime von Microsoft muss installiert werden, damit das Script funktioniert, Script wird beendet. Nach Installation der VC++ Runtime das Script erneut ausführen.",
 },
     "en": {
         "app_title": "AutoTracker GUI (Python) – {os}",
@@ -288,6 +327,9 @@ I18N = {
         "about_title": "Info",
         "about_text": "Based on the script by ",
         "about_link": "Polyfjord",
+        "dlg_vcredist_title": "VC++ runtime missing",
+        "dlg_vcredist_msg": "Microsoft VC++ runtime seems missing. Install now?",
+        "dlg_vcredist_info": "Microsoft VC++ runtime must be installed for the script to work, script will exit. After installing the VC++ runtime, run the script again.",
 }
 }
 
@@ -1348,26 +1390,7 @@ class AutoTrackerGUI(tk.Tk):
             want_cuda = prefer_cuda if getattr(self, "use_cuda_build_var", None) else has_cuda
             # ffmpeg
             if getattr(self, "inst_ffmpeg", None) and self.inst_ffmpeg.get():                # Ensure Microsoft Visual C++ Redistributable (x64) is present (needed by COLMAP)
-                try:
-                    if not _win_has_vc_redist():
-                        self._log_install("[INSTALL] VC++ Redistributable fehlt -> lade und installiere…")
-                        vc_url = "https://aka.ms/vs/17/release/vc_redist.x64.exe"
-                        from urllib.parse import urlsplit
-                        vc_exe = sources_dir / Path(urlsplit(vc_url).path).name
-                        download_file(vc_url, vc_exe, self._log_install)
-                        cmd = [str(vc_exe), "/install", "/quiet", "/norestart"]
-                        try:
-                            subprocess.run(" ".join(f'"{c}"' for c in cmd), shell=True, check=False)
-                        except Exception as e:
-                            self._log_install(f"[INSTALL] Warnung: VC++ Installer konnte nicht gestartet werden: {e}")
-                        if _win_has_vc_redist():
-                            self._log_install("[INSTALL] VC++ Redistributable installiert.")
-                        else:
-                            self._log_install("[INSTALL] Warnung: VC++ Redistributable scheint noch zu fehlen.")
-                    else:
-                        self._log_install("[INSTALL] VC++ Redistributable bereits vorhanden.")
-                except Exception as e:
-                    self._log_install(f"[INSTALL] Warnung: VC++ Prüfung/Installation fehlgeschlagen: {e}")
+                _win_ensure_vc_redist(sources_dir, self._log_install)
 
                 self._log_install("[INSTALL] ffmpeg (Windows prebuilt)")
                 from urllib.parse import urlsplit
@@ -1939,4 +1962,5 @@ class AutoTrackerGUI(tk.Tk):
             pass
 
 if __name__ == "__main__":
+    ensure_vc_redist()
     app = AutoTrackerGUI(); app.mainloop()
