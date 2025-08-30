@@ -1,6 +1,21 @@
 #!/usr/bin/env python3
 
-import os, shutil, json
+import json
+import locale
+import os
+import platform
+import shlex
+import shutil
+import ssl
+import subprocess
+import sys
+import tarfile
+import tempfile
+import threading
+import time
+import urllib.request
+import webbrowser
+import zipfile
 from pathlib import Path
 
 SETTINGS_FILE = Path(__file__).resolve().parent / "settings.json"
@@ -146,9 +161,6 @@ This file is based on your working version (AutoTracker_GUI_crossplat(12).py)
 and merges back the language switch and all installer/compile improvements
 without removing any of the controls you liked.
 """
-import os, sys, shlex, subprocess, threading, time, platform, shutil, tarfile, zipfile, tempfile, ssl, urllib.request, locale
-from pathlib import Path
-import webbrowser
 
 IS_WINDOWS = (os.name == "nt")
 OS_NAME = platform.system()
@@ -434,9 +446,8 @@ def run_cmd(cmd_list, cwd=None, log_fn=None):
     # Prepare env for first attempt (inject Qt paths for COLMAP/GLOMAP on Windows)
     env = None
     try:
-        from pathlib import Path as _P
         exe_str = cmd_list[0]
-        exe = _P(str(exe_str).strip('"'))
+        exe = Path(str(exe_str).strip('"'))
         name = exe.name.lower()
         if os.name == 'nt' and exe.exists() and ('colmap' in name or 'glomap' in name):
             env = os.environ.copy()
@@ -1293,8 +1304,6 @@ class AutoTrackerGUI(tk.Tk):
             return False
 
     def _copytree_overwrite(self, src_dir, dst_dir):
-        # (removed) shutil already imported at module level
-        from pathlib import Path
         src_dir = Path(src_dir)
         dst_dir = Path(dst_dir)
         dst_dir.mkdir(parents=True, exist_ok=True)
@@ -1468,9 +1477,7 @@ class AutoTrackerGUI(tk.Tk):
                         if len(_kids) == 1 and _kids[0].is_dir() and _kids[0].name.lower() != 'bin':
                             _wrapper = _kids[0]
                             for _item in _wrapper.iterdir():
-                                # (removed) shutil already imported at module level
                                 shutil.move(str(_item), str(target_root / _item.name))
-                            # (removed) local import of shutil
                             _sh.rmtree(_wrapper, ignore_errors=True)
                             self._log_install(f"[WIN] GLOMAP Wrapper '{_wrapper.name}' entfernt – Inhalte nach {target_root} verschoben.")
                 except Exception as e:
