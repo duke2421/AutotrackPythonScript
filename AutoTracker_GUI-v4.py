@@ -1937,32 +1937,10 @@ class AutoTrackerGUI(tk.Tk):
         txt.tag_add("link", start_idx, end_idx); txt.tag_config("link", foreground="#0b61a4", underline=1)
         txt.tag_bind("link", "<Button-1>", lambda e: webbrowser.open_new_tab(url)); txt.configure(state="disabled")
         btnbar = ttk.Frame(frm); btnbar.pack(fill="x", pady=(8,0))
-        # --- begin: added donation buttons (PayPal + Patreon) ---
-        try:
-            pp_img = tk.PhotoImage(data="iVBORw0KGgoAAAANSUhEUgAAABQAAAAUCAYAAACNiR0NAAAA4klEQVR4nGMUMfCfjYGBgQGxZ2BgQHq0A0jCY3xg+P//Pz4zYQh8DxU0Y5iBv3//z8DMfDgYGBg0N/fPz8GkBqC3Tg1E8gM0sYkQh1ZgMQxg0w2wZbQniJ9wK5kQWwqQxYg+g8J5w6gJ2g+g0kBfQqgEiHQxgN0gkJg2QYg8w1g8g6yH1g3kCkQmQZC8w3g7QGxkclgPwYQeUQfQZJg7wQmQawQmQe4E8gqQOsHWcY7iJz0G4G8j1gVYF2QfQb4GIlC1Y0G3gAwM7hJmWgG0g/4A6xTgYH0GgB1I2QjVjgP4b0GkB2R8hN1gkJgH0Y0G0gGQ+IY2C3wGkAqcwo0kHkYw0GUBgAxLqzDqgI1qAAAAAElFTkSuQmCC")
-        except Exception:
-            pp_img = None
-        try:
-            pat_img = tk.PhotoImage(data="iVBORw0KGgoAAAANSUhEUgAAABQAAAAUCAYAAACNiR0NAAABJElEQVR4nM2UPU7CUBCFv6w2Qp7gS3gJr4BvQb8BvIGm1gYB1sYk3aQmHkB0sQ2gE2lQb0a9m0y2g1TjvS7m8h4c6mVYgqf8Tg8m8f8zA0Q3y9Qy3s5n1M3m1m+2X3wZk1w9g4g0k0p4gU3wWjXn5pLw5aVwWcTPtq7hQ5gC2D1g9s3wQm4C9A9d4S3LQ4kqE8o4p3Epi8yqk1H5Jx0m4w2lqgQkF5iS1mQ3b9w0yqfQwKkKfQm1k3uT0K1kHj7kQ2wB7k6S2qkQ0JH1p1cA4g2q8K6m0JwqQmK8b0L3CqkY4+3p1l4oXcJr0jvJbZJb5mJ8Kk8r2Qm0H7gXg6tAs4mV9Ck3H3k3+Q4QmGkqvGJp9k8P28+JHj9J5E3S6s1Fz3H3q9T7Q3w8gC5l3d8y7E4QdS7ZtQAAAABJRU5ErkJggg==")
-        except Exception:
-            pat_img = None
-        # PayPal
         donate_url = "https://paypal.me/DanielBAdberg"
-        if pp_img:
-            _btn_pp = ttk.Button(btnbar, text="Spendiere mir einen Kaffee", image=pp_img, compound="left", command=lambda: webbrowser.open_new_tab(donate_url))
-            _btn_pp.image = pp_img
-            _btn_pp.pack(side="left")
-        else:
-            ttk.Button(btnbar, text="Spendiere mir einen Kaffee", command=lambda: webbrowser.open_new_tab(donate_url)).pack(side="left")
-        # Patreon
+        ttk.Button(btnbar, text="Spendiere mir einen Kaffee", command=lambda: webbrowser.open_new_tab(donate_url)).pack(side="left")
         pat_url = "https://www.patreon.com/polyfjord"
-        if pat_img:
-            _btn_pat = ttk.Button(btnbar, text="Polyfjords Patreon", image=pat_img, compound="left", command=lambda: webbrowser.open_new_tab(pat_url))
-            _btn_pat.image = pat_img
-            _btn_pat.pack(side="left")
-        else:
-            ttk.Button(btnbar, text="Polyfjords Patreon", command=lambda: webbrowser.open_new_tab(pat_url)).pack(side="left")
-        # --- end: added donation buttons (PayPal + Patreon) ---
+        ttk.Button(btnbar, text="Polyfjords Patreon", command=lambda: webbrowser.open_new_tab(pat_url)).pack(side="left")
         ttk.Button(btnbar, text=self.S.get("installer_close", "Schließen"), command=win.destroy).pack(side="right")
         try:
             self.update_idletasks(); x = self.winfo_x() + self.winfo_width() - win.winfo_reqwidth() - 40; y = self.winfo_y() + 60; win.geometry(f"+{x}+{y}")
