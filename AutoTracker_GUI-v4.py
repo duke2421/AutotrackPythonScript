@@ -1399,9 +1399,7 @@ class AutoTrackerGUI(tk.Tk):
             prefer_cuda = bool(getattr(self, "use_cuda_build_var", None) and self.use_cuda_build_var.get())
             want_cuda = prefer_cuda if getattr(self, "use_cuda_build_var", None) else has_cuda
             # ffmpeg
-            if getattr(self, "inst_ffmpeg", None) and self.inst_ffmpeg.get():                # Ensure Microsoft Visual C++ Redistributable (x64) is present (needed by COLMAP)
-                _win_ensure_vc_redist(sources_dir, self._log_install)
-
+            if getattr(self, "inst_ffmpeg", None) and self.inst_ffmpeg.get():
                 self._log_install("[INSTALL] ffmpeg (Windows prebuilt)")
                 from urllib.parse import urlsplit
                 archive = sources_dir / Path(urlsplit(ffmpeg_url).path).name
