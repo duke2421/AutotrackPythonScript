@@ -21,3 +21,11 @@ Unter Linux dient das Script ebenfalls der automatisierten Installation und Nutz
 4. In der GUI die gewünschten Installations- und Testschritte ausführen.
 
 *Das Kompilieren von COLMAP und GLOMAP wurde nur unter Linux Mint getestet und kann auf anderen Distributionen fehlschlagen.*
+
+## Haftungsausschluss / Disclaimer
+
+**Deutsch:**  
+**Haftungsausschluss:** Die im Repository enthaltenen Links zu PayPal / Patreon sind persönliche Spendenlinks. Dieses Projekt steht in keiner Verbindung zu PayPal oder Patreon und wird von diesen nicht geprüft, gesponsert oder unterstützt.
+
+**English:**  
+**Disclaimer:** The PayPal/Patreon links in this repository are personal donation links. This project is not affiliated with, reviewed, sponsored, or endorsed by PayPal or Patreon.
