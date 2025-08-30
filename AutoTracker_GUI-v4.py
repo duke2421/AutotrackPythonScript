@@ -542,14 +542,48 @@ def detect_cuda():
 
 # --- Systemweite Paketinstallation ---
 # Führt Installation mit sudo/pkexec aus (nur Systempakete).
+def pkg_missing(pm, pkgs, log_fn):
+    """Return list of packages not yet installed."""
+    missing = []
+    for pkg in pkgs:
+        if pm == "apt":
+            cmd = ["dpkg", "-s", pkg]
+        elif pm in ("dnf", "zypper"):
+            cmd = ["rpm", "-q", pkg]
+        elif pm == "pacman":
+            cmd = ["pacman", "-Qi", pkg]
+        elif pm == "apk":
+            cmd = ["apk", "info", "-e", pkg]
+        else:
+            missing.append(pkg)
+            continue
+        # Rootless check: hide output, only look at return code
+        res = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        if res.returncode == 0:
+            log_fn(f"[pkg] {pkg} bereits installiert")
+        else:
+            missing.append(pkg)
+    return missing
+
 def pkg_install(pm, pkgs, log_fn):
-    if pm is None or not pkgs: return 1
-    if pm == "apt":    cmd = f"apt update && apt install -y {' '.join(pkgs)}"
-    elif pm == "dnf":  cmd = f"dnf install -y {' '.join(pkgs)}"
-    elif pm == "zypper": cmd = f"zypper --non-interactive install -y {' '.join(pkgs)}"
-    elif pm == "pacman": cmd = f"pacman -Sy --noconfirm {' '.join(pkgs)}"
-    elif pm == "apk":  cmd = f"apk add --no-cache {' '.join(pkgs)}"
-    else: return 1
+    if pm is None or not pkgs:
+        return 1
+    pkgs = pkg_missing(pm, pkgs, log_fn)
+    if not pkgs:
+        log_fn("[pkg] alle Pakete bereits installiert")
+        return 0
+    if pm == "apt":
+        cmd = f"apt update && apt install -y {' '.join(pkgs)}"
+    elif pm == "dnf":
+        cmd = f"dnf install -y {' '.join(pkgs)}"
+    elif pm == "zypper":
+        cmd = f"zypper --non-interactive install -y {' '.join(pkgs)}"
+    elif pm == "pacman":
+        cmd = f"pacman -Sy --noconfirm {' '.join(pkgs)}"
+    elif pm == "apk":
+        cmd = f"apk add --no-cache {' '.join(pkgs)}"
+    else:
+        return 1
     log_fn(f"[pkg] {cmd}")
     return subprocess.run(_sudo_wrap(cmd)).returncode
 
