@@ -17,8 +17,28 @@
 #  Ziel: In der Versionskontrolle (z. B. Gitea) sollen nur
 #  die tatsächlich relevanten Codeänderungen sichtbar sein.
 # ===========================================================
-import os, shutil
+import os, shutil, json
 from pathlib import Path
+
+SETTINGS_FILE = Path(__file__).resolve().parent / "settings.json"
+DEFAULT_SETTINGS = {"ask_create_structure": True, "top_dir": ""}
+
+def load_settings():
+    try:
+        with open(SETTINGS_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+            if isinstance(data, dict):
+                return {**DEFAULT_SETTINGS, **data}
+    except Exception:
+        pass
+    return DEFAULT_SETTINGS.copy()
+
+def save_settings(cfg):
+    try:
+        with open(SETTINGS_FILE, "w", encoding="utf-8") as f:
+            json.dump(cfg, f, indent=2)
+    except Exception:
+        pass
 
 # --- Windows ANGLE-DLL Sicherung ---
 # Ergänzt libEGL/libGLESv2/opengl32sw/d3dcompiler_47 wenn im colmap/bin fehlen.
@@ -872,11 +892,13 @@ class AutoTrackerGUI(tk.Tk):
         self.info_btn.pack(side="right")
 
         # --- paths & tools ---
+        self.settings = load_settings()  # load persisted settings
         self.paths_frame = ttk.LabelFrame(self, text=self.S["paths_tools"]); self.paths_frame.pack(fill="x", padx=10, pady=(10, 6))
         script_dir = Path(__file__).resolve().parent; parent = script_dir.parent
         if looks_like_05_script(script_dir.name) or (parent / DEFAULT_DIRS["sfm"]).exists() or (parent / DEFAULT_DIRS["ffmpeg"]).exists():
             top_candidate = parent
         else: top_candidate = script_dir
+        top_candidate = Path(self.settings.get("top_dir") or top_candidate)  # use saved top_dir if present
         self.top_dir_var = tk.StringVar(value=str(top_candidate))
 
         row = 0
@@ -1083,6 +1105,8 @@ class AutoTrackerGUI(tk.Tk):
         top = Path(self.top_dir_var.get())
         self.scenes_dir_var.set(str(top / DEFAULT_DIRS["scenes"]))
         self._auto_detect_tools()
+        self.settings["top_dir"] = str(top)  # persist selected top_dir
+        save_settings(self.settings)
 
     def _project_missing_dirs(self, top: Path):
         base_dirs = [top / DEFAULT_DIRS["sfm"], top / DEFAULT_DIRS["videos"], top / DEFAULT_DIRS["ffmpeg"], top / DEFAULT_DIRS["scenes"], top / DEFAULT_DIRS["sources"]]
@@ -1100,14 +1124,17 @@ class AutoTrackerGUI(tk.Tk):
         for d in dirs: d.mkdir(parents=True, exist_ok=True)
 
     def _maybe_offer_create_structure(self):
+        if not self.settings.get("ask_create_structure", True): return  # user opted out
         top = Path(self.top_dir_var.get()); missing = self._project_missing_dirs(top)
         if not missing: return
-        if messagebox.askyesno(self.S["dlg_create_structure_title"], self.S["dlg_create_structure_msg"]):
-            base_dir = filedialog.askdirectory(title=self.S["dlg_create_structure_where"], initialdir=str(top))
-            if not base_dir: return
-            base = Path(base_dir); self._create_project_structure(base)
-            self.top_dir_var.set(str(base)); self.scenes_dir_var.set(str(base / DEFAULT_DIRS["scenes"]))
-            self._auto_detect_tools(); messagebox.showinfo(self.S["dlg_done"], self.S["dlg_structure_created"])
+        create = messagebox.askyesno(self.S["dlg_create_structure_title"], self.S["dlg_create_structure_msg"])
+        self.settings["ask_create_structure"] = create; save_settings(self.settings)
+        if not create: return
+        base_dir = filedialog.askdirectory(title=self.S["dlg_create_structure_where"], initialdir=str(top))
+        if not base_dir: return
+        base = Path(base_dir); self._create_project_structure(base)
+        self.top_dir_var.set(str(base)); self.scenes_dir_var.set(str(base / DEFAULT_DIRS["scenes"]))
+        self._auto_detect_tools(); messagebox.showinfo(self.S["dlg_done"], self.S["dlg_structure_created"])
 
     def _auto_detect_tools(self):
         top = Path(self.top_dir_var.get())
