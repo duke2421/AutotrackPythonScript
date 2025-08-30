@@ -26,20 +26,13 @@ git checkout main
 git pull --ff-only origin main
 ```
 
-2. **Neuen Arbeitsbranch anlegen** von `main`:
 
-```bash
-git checkout -b feat/ATG-<Kurzbeschreibung>-dev008
-```
-
-3. **Dateiname & Versionsregel:** Wenn Du das Script änderst und eine dev‑Version erzeugst, speichere die komplette Datei unter `AutoTracker_GUI-v2.dev_008.py` (Erhöhe REV jeweils um 1). Ändere **nur den Dateinamen**, nicht andere Dateien, außer erforderlich.
-
-4. **Commit‑Regeln**
+2. **Commit‑Regeln**
    - Commit‑Message (prägnant):
      `feat: <Kurzbeschreibung> (AutoTracker_GUI-v2.dev_008.py)`
    - Body (bei Bedarf): kurze, technische Erklärung und warum die Änderung minimal ist.
 
-5. **Pull Request / Merge**
+3. **Pull Request / Merge**
    - PR‑Titel: `AutoTracker: <Kurzbeschreibung> — dev_008`
    - PR‑Beschreibung: Liste der geänderten Stellen (Datei + Funktion + Zeilennummern), kurze QA‑Anleitung, was getestet wurde (OS, Befehle, erwartetes Verhalten), und Hinweis, dass **Windows‑Logik nicht verändert** wurde.
 
