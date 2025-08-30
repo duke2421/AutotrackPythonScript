@@ -1,22 +1,5 @@
 #!/usr/bin/env python3
-# ===========================================================
-#  HINWEISE FÜR ANPASSUNGEN AM SCRIPT
-#
-#  - Immer das komplette Script zurückliefern, nicht nur Teile.
-#  - Nur die wirklich nötigen Änderungen durchführen.
-#  - Keine unnötigen Änderungen an Leerzeichen, Kommentaren
-#    oder Formatierungen vornehmen.
-#  - Struktur und Kommentare unverändert lassen, außer wenn
-#    es für die gewünschte Änderung zwingend notwendig ist.
-#
-#  NAMENSKONVENTION:
-#  Solange Änderungen noch nicht erfolgreich getestet sind:
-#  AutoTracker_GUI-v2.dev_REV.py   (REV = hochzählen)
-#  Beispiel: AutoTracker_GUI-v2.dev_006.py
-#
-#  Ziel: In der Versionskontrolle (z. B. Gitea) sollen nur
-#  die tatsächlich relevanten Codeänderungen sichtbar sein.
-# ===========================================================
+
 import os, shutil, json
 from pathlib import Path
 
