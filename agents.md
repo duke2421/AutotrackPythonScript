@@ -12,9 +12,8 @@ Diese `agents.md` beschreibt, wie ein automatisierter Entwicklungs‑Agent (z.�
 2. **Nur tatsächlich nötige Änderungen** durchführen. Keine kosmetischen Änderungen (Leerzeilen, Einrückungen, Kommentar‑Umformungen) wenn nicht zwingend.
 3. **Windows‑Logik darf nicht verändert werden.** Änderungen dürfen Windows‑Spezifika nur lesen/testen, nicht umbauen (außer nach expliziter Erlaubnis).
 4. **Linux‑Änderungen sind erlaubt**, aber müssen Windows‑Kompatibilität nicht brechen.
-5. **Dateinamenskonvention für Dev‑Releases:** `AutoTracker_GUI-v2.dev_REV.py` — REV ist fortlaufend. Aktueller Stand im Repo: `REV 007`. Nächste Dev‑Datei **muss** `AutoTracker_GUI-v2.dev_008.py` heißen (sofern ein neues Dev‑Release erstellt wird).
-6. **Keine automatische Auto‑Formatting‑Tools** (Black, yapf, etc.) ausführen, wenn dadurch unnötige Diffs entstehen. Falls ein Formatter benutzt wird, dokumentiere jede Änderung explizit im PR.
-7. **Teste lokal bevor Commit:** mind. Starten der GUI auf dem Ziel‑OS und Ausführen der Installer‑Dialog‑Routine (sofern betroffen).
+5. **Keine automatische Auto‑Formatting‑Tools** (Black, yapf, etc.) ausführen, wenn dadurch unnötige Diffs entstehen. Falls ein Formatter benutzt wird, dokumentiere jede Änderung explizit im PR.
+6. **Teste lokal bevor Commit:** mind. Starten der GUI auf dem Ziel‑OS und Ausführen der Installer‑Dialog‑Routine (sofern betroffen).
 
 ---
 
