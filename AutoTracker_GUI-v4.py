@@ -257,6 +257,7 @@ I18N = {
         "about_title": "Info",
         "about_text": "Basiert auf dem Script von ",
         "about_link": "Polyfjord",
+        "about_paypal_btn": "Spendiere mir einen Kaffee via PayPal",
         "dlg_vcredist_title": "VC++ Runtime fehlt",
         "dlg_vcredist_msg": "Die Microsoft VC++ Runtime scheint zu fehlen. Jetzt installieren?",
         "dlg_vcredist_info": "Die VC++ Runtime von Microsoft muss installiert werden, damit das Script funktioniert, Script wird beendet. Nach Installation der VC++ Runtime das Script erneut ausführen.",
@@ -342,6 +343,7 @@ I18N = {
         "about_title": "Info",
         "about_text": "Based on the script by ",
         "about_link": "Polyfjord",
+        "about_paypal_btn": "Buy me a coffee via PayPal",
         "dlg_vcredist_title": "VC++ runtime missing",
         "dlg_vcredist_msg": "Microsoft VC++ runtime seems missing. Install now?",
         "dlg_vcredist_info": "Microsoft VC++ runtime must be installed for the script to work, script will exit. After installing the VC++ runtime, run the script again.",
@@ -1979,7 +1981,7 @@ class AutoTrackerGUI(tk.Tk):
         txt.tag_bind("link", "<Button-1>", lambda e: webbrowser.open_new_tab(url)); txt.configure(state="disabled")
         btnbar = ttk.Frame(frm); btnbar.pack(fill="x", pady=(8,0))
         donate_url = "https://paypal.me/DanielBAdberg"
-        ttk.Button(btnbar, text="Spendiere mir einen Kaffee", command=lambda: webbrowser.open_new_tab(donate_url)).pack(side="left")
+        ttk.Button(btnbar, text=self.S["about_paypal_btn"], command=lambda: webbrowser.open_new_tab(donate_url)).pack(side="left")
         pat_url = "https://www.patreon.com/polyfjord"
         ttk.Button(btnbar, text="Polyfjords Patreon", command=lambda: webbrowser.open_new_tab(pat_url)).pack(side="left")
         ttk.Button(btnbar, text=self.S.get("installer_close", "Schließen"), command=win.destroy).pack(side="right")
