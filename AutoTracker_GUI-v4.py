@@ -237,6 +237,8 @@ I18N = {
         "installer_start": "Installieren starten",
         "installer_close": "Schließen",
         "installer_note": "Hinweis: Projektlokale Installation nach 01 GLOMAP/<tool>.\nRelease-Archive (.tar.gz/.zip) werden automatisch nach 06 Sources/<tool> entpackt.",
+        "installer_done_ok": "Installation der Tools erfolgreich abgeschlossen",
+        "installer_done_fail": "Installation der Tools mit Fehler beendet",
         "warn_running": "Ein Durchlauf ist bereits aktiv.",
         "warn_no_videos": "Bitte mindestens ein Video hinzufügen.",
         "err_ffmpeg": "Bitte die ausführbare Datei für FFMPEG auswählen.",
@@ -321,6 +323,8 @@ I18N = {
         "installer_start": "Start installing",
         "installer_close": "Close",
         "installer_note": "Note: Local project install to 01 GLOMAP/<tool>.\nRelease archives (.tar.gz/.zip) are unpacked to 06 Sources/<tool>.",
+        "installer_done_ok": "Tools installation completed successfully",
+        "installer_done_fail": "Tools installation finished with errors",
         "warn_running": "A run is already active.",
         "warn_no_videos": "Please add at least one video.",
         "err_ffmpeg": "Please select the executable for FFMPEG.",
@@ -1285,7 +1289,7 @@ class AutoTrackerGUI(tk.Tk):
         if getattr(self, "install_progress", None):
             # Vor Start einmal zurücksetzen
             self.install_progress.config(value=0, maximum=0)
-        threading.Thread(target=self._installer_worker, daemon=True).start()
+        threading.Thread(target=self._installer_worker, args=(win,), daemon=True).start()
 
     def _extras_for(self, pm, tool):
         if pm == "apt":
@@ -1368,7 +1372,7 @@ class AutoTrackerGUI(tk.Tk):
         # --- Installer Worker ---
         # Führt Installationen im Hintergrund aus.
         # Downloads ohne sudo, Systempakete mit sudo.
-    def _installer_worker(self):
+    def _installer_worker(self, win):
         osr = _read_os_release() if OS_NAME == "Linux" else {}
         self._log_install(f"OS: {OS_NAME} {osr.get('NAME','')} {osr.get('VERSION','')}")
         has_cuda = detect_cuda(); self._log_install(f"CUDA erkannt: {'Ja' if has_cuda else 'Nein'}")
@@ -1449,147 +1453,152 @@ class AutoTrackerGUI(tk.Tk):
 
 
         if OS_NAME == "Windows":
-            self._log_install("Windows: lade vorcompilierte Pakete…")
-            has_cuda = detect_cuda()
-            top = Path(self.top_dir_var.get())
-            sources_dir = top / DEFAULT_DIRS["sources"]
-            colmap_src = sources_dir / "colmap"
-            glomap_src = sources_dir / "glomap"
-            # Fortschritts-Callback für Downloads/Kopien
-            def _prog(total, done):
-                try:
-                    if total:
-                        self.install_progress.config(maximum=total)
-                    self.install_progress.config(value=done)
-                    self.update_idletasks()
-                except Exception:
-                    pass
-            def _remote_size(u: str) -> int:
-                try:
-                    from urllib.request import Request, urlopen
-                    with urlopen(Request(u, method='HEAD')) as r:
-                        return int(r.headers.get('Content-Length') or 0)
-                except Exception:
-                    return 0
-            # URLs
-            colmap_url_cuda = "https://github.com/colmap/colmap/releases/download/3.12.3/colmap-x64-windows-cuda.zip"
-            colmap_url_nocuda = "https://github.com/colmap/colmap/releases/download/3.12.3/colmap-x64-windows-nocuda.zip"
-            glomap_url_cuda = "https://github.com/colmap/glomap/releases/download/1.1.0/glomap-x64-windows-cuda.zip"
-            glomap_url_nocuda = "https://github.com/colmap/glomap/releases/download/1.1.0/glomap-x64-windows-nocuda.zip"
-            ffmpeg_url = "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip"
-            prefer_cuda = bool(getattr(self, "use_cuda_build_var", None) and self.use_cuda_build_var.get())
-            want_cuda = prefer_cuda if getattr(self, "use_cuda_build_var", None) else has_cuda
-            # ffmpeg
-            if getattr(self, "inst_ffmpeg", None) and self.inst_ffmpeg.get():
-                self._log_install("[INSTALL] ffmpeg (Windows prebuilt)")
-                from urllib.parse import urlsplit
-                archive = sources_dir / Path(urlsplit(ffmpeg_url).path).name
-                sz = _remote_size(ffmpeg_url)
-                if sz:
-                    self.install_progress.config(maximum=sz)
-                download_file(ffmpeg_url, archive, self._log_install, progress_cb=_prog)
-                self.install_progress.config(value=0)
-                self._log_install("Download abgeschlossen")
-                ff_src = extract_archive(archive, sources_dir / "ffmpeg", self._log_install)
-                if ff_src:
-                    target_bin = top / DEFAULT_DIRS["ffmpeg"] / "bin"
-                    self._win_copy_tool_bin(ff_src, "ffmpeg.exe", target_bin, self._log_install, progress_cb=_prog)
+            success = True
+            try:
+                self._log_install("Windows: lade vorcompilierte Pakete…")
+                has_cuda = detect_cuda()
+                top = Path(self.top_dir_var.get())
+                sources_dir = top / DEFAULT_DIRS["sources"]
+                colmap_src = sources_dir / "colmap"
+                glomap_src = sources_dir / "glomap"
+                # Fortschritts-Callback für Downloads/Kopien
+                def _prog(total, done):
+                    try:
+                        if total:
+                            self.install_progress.config(maximum=total)
+                        self.install_progress.config(value=done)
+                        self.update_idletasks()
+                    except Exception:
+                        pass
+                def _remote_size(u: str) -> int:
+                    try:
+                        from urllib.request import Request, urlopen
+                        with urlopen(Request(u, method='HEAD')) as r:
+                            return int(r.headers.get('Content-Length') or 0)
+                    except Exception:
+                        return 0
+                # URLs
+                colmap_url_cuda = "https://github.com/colmap/colmap/releases/download/3.12.3/colmap-x64-windows-cuda.zip"
+                colmap_url_nocuda = "https://github.com/colmap/colmap/releases/download/3.12.3/colmap-x64-windows-nocuda.zip"
+                glomap_url_cuda = "https://github.com/colmap/glomap/releases/download/1.1.0/glomap-x64-windows-cuda.zip"
+                glomap_url_nocuda = "https://github.com/colmap/glomap/releases/download/1.1.0/glomap-x64-windows-nocuda.zip"
+                ffmpeg_url = "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip"
+                prefer_cuda = bool(getattr(self, "use_cuda_build_var", None) and self.use_cuda_build_var.get())
+                want_cuda = prefer_cuda if getattr(self, "use_cuda_build_var", None) else has_cuda
+                # ffmpeg
+                if getattr(self, "inst_ffmpeg", None) and self.inst_ffmpeg.get():
+                    self._log_install("[INSTALL] ffmpeg (Windows prebuilt)")
+                    from urllib.parse import urlsplit
+                    archive = sources_dir / Path(urlsplit(ffmpeg_url).path).name
+                    sz = _remote_size(ffmpeg_url)
+                    if sz:
+                        self.install_progress.config(maximum=sz)
+                    download_file(ffmpeg_url, archive, self._log_install, progress_cb=_prog)
                     self.install_progress.config(value=0)
-                    self._log_install("Install abgeschlossen")
-            # COLMAP
-            if getattr(self, "inst_colmap", None) and self.inst_colmap.get():
-                url = colmap_url_cuda if want_cuda else colmap_url_nocuda
-                self._log_install(f"[INSTALL] COLMAP Quellen: {url}")
-                from urllib.parse import urlsplit
-                archive = sources_dir / Path(urlsplit(url).path).name
-                sz = _remote_size(url)
-                if sz:
-                    self.install_progress.config(maximum=sz)
-                download_file(url, archive, self._log_install, progress_cb=_prog)
-                self.install_progress.config(value=0)
-                self._log_install("Download abgeschlossen")
-                cm_src = extract_archive(archive, colmap_src, self._log_install)
-                if cm_src:
-                    children = [p for p in (cm_src).iterdir()]
-                    colmap_root = cm_src
-                    if len(children) == 1 and children[0].is_dir():
-                        colmap_root = children[0]
-                    target_root = top / DEFAULT_DIRS["sfm"] / "colmap"
-                    self._copytree_overwrite(colmap_root, target_root, progress_cb=_prog)
+                    self._log_install("Download abgeschlossen")
+                    ff_src = extract_archive(archive, sources_dir / "ffmpeg", self._log_install)
+                    if ff_src:
+                        target_bin = top / DEFAULT_DIRS["ffmpeg"] / "bin"
+                        self._win_copy_tool_bin(ff_src, "ffmpeg.exe", target_bin, self._log_install, progress_cb=_prog)
+                        self.install_progress.config(value=0)
+                        self._log_install("Install abgeschlossen")
+                # COLMAP
+                if getattr(self, "inst_colmap", None) and self.inst_colmap.get():
+                    url = colmap_url_cuda if want_cuda else colmap_url_nocuda
+                    self._log_install(f"[INSTALL] COLMAP Quellen: {url}")
+                    from urllib.parse import urlsplit
+                    archive = sources_dir / Path(urlsplit(url).path).name
+                    sz = _remote_size(url)
+                    if sz:
+                        self.install_progress.config(maximum=sz)
+                    download_file(url, archive, self._log_install, progress_cb=_prog)
                     self.install_progress.config(value=0)
-                    self._log_install("Install abgeschlossen")
-                    self._log_install(f"[WIN] COLMAP nach {target_root} kopiert.")
-            # GLOMAP
-            if getattr(self, "inst_glomap", None) and self.inst_glomap.get():
-                url = glomap_url_cuda if want_cuda else glomap_url_nocuda
-                self._log_install(f"[INSTALL] GLOMAP Quellen: {url}")
-                from urllib.parse import urlsplit
-                archive = sources_dir / Path(urlsplit(url).path).name
-                sz = _remote_size(url)
-                if sz:
-                    self.install_progress.config(maximum=sz)
-                download_file(url, archive, self._log_install, progress_cb=_prog)
-                self.install_progress.config(value=0)
-                self._log_install("Download abgeschlossen")
-                target_root = top / DEFAULT_DIRS["sfm"] / "glomap"
-                # Extract only 'bin/' from archive into target_root/bin
-                try:
-                    import zipfile
-                    shutil.rmtree(target_root / "bin", ignore_errors=True)
-                    (target_root / "bin").mkdir(parents=True, exist_ok=True)
-                    with zipfile.ZipFile(archive, 'r') as zf:
-                        members = [n for n in zf.namelist() if n and not n.endswith('/')]
-                        for i, n in enumerate(members, 1):
-                            parts = [p for p in n.split('/') if p]
-                            if not parts:
-                                continue
-                            if parts[0].lower() == 'bin':
-                                rel = '/'.join(parts[1:])
-                            elif len(parts) >= 2 and parts[1].lower() == 'bin':
-                                rel = '/'.join(parts[2:])
-                            else:
-                                continue
-                            if not rel:
-                                continue
-                            dest = (target_root / 'bin' / rel)
-                            dest.parent.mkdir(parents=True, exist_ok=True)
-                            with zf.open(n) as src, open(dest, 'wb') as dst:
-                                shutil.copyfileobj(src, dst)
-                            _prog(len(members), i)
+                    self._log_install("Download abgeschlossen")
+                    cm_src = extract_archive(archive, colmap_src, self._log_install)
+                    if cm_src:
+                        children = [p for p in (cm_src).iterdir()]
+                        colmap_root = cm_src
+                        if len(children) == 1 and children[0].is_dir():
+                            colmap_root = children[0]
+                        target_root = top / DEFAULT_DIRS["sfm"] / "colmap"
+                        self._copytree_overwrite(colmap_root, target_root, progress_cb=_prog)
+                        self.install_progress.config(value=0)
+                        self._log_install("Install abgeschlossen")
+                        self._log_install(f"[WIN] COLMAP nach {target_root} kopiert.")
+                # GLOMAP
+                if getattr(self, "inst_glomap", None) and self.inst_glomap.get():
+                    url = glomap_url_cuda if want_cuda else glomap_url_nocuda
+                    self._log_install(f"[INSTALL] GLOMAP Quellen: {url}")
+                    from urllib.parse import urlsplit
+                    archive = sources_dir / Path(urlsplit(url).path).name
+                    sz = _remote_size(url)
+                    if sz:
+                        self.install_progress.config(maximum=sz)
+                    download_file(url, archive, self._log_install, progress_cb=_prog)
                     self.install_progress.config(value=0)
-                    self._log_install("Install abgeschlossen")
-                    self._log_install(f"[WIN] GLOMAP bin extrahiert nach {target_root / 'bin'}")
-                except Exception as e:
-                    self._log_install(f"[INSTALL] Fehler: Konnte GLOMAP bin nicht extrahieren: {e}")
-                # (wrapper cleanup skipped; we extract bin directly)
-                # move its contents up so that target_root/bin/... exists.
-                try:
-                    if target_root.exists():
-                        _kids = [p for p in target_root.iterdir()]
-                        if len(_kids) == 1 and _kids[0].is_dir() and _kids[0].name.lower() != 'bin':
-                            _wrapper = _kids[0]
-                            for _item in _wrapper.iterdir():
-                                shutil.move(str(_item), str(target_root / _item.name))
-                            _sh.rmtree(_wrapper, ignore_errors=True)
-                            self._log_install(f"[WIN] GLOMAP Wrapper '{_wrapper.name}' entfernt – Inhalte nach {target_root} verschoben.")
-                except Exception as e:
-                    self._log_install(f"[INSTALL] Warnung: Konnte Wrapper nicht bereinigen: {e}")
-
-                if True:
-                    self._log_install(f"[WIN] GLOMAP entpackt nach {target_root}")
-                # ANGLE/Software-OpenGL DLLs sicherstellen (Windows, nach COLMAP-Entpacken)
-                try:
-                    colmap_dir = base_dir / '01 GLOMAP' / 'colmap'
-                    _win_ensure_angle_dlls(colmap_dir, sources_dir, self._log_install)
-                except Exception as e:
-                    self._log_install(f"[INSTALL] Warnung: ANGLE-Ergänzung fehlgeschlagen: {e}")
-
-
-            self._log_install("Installer-Durchlauf (Windows) beendet.")
-            try: self._auto_detect_tools()
-            except Exception: pass
+                    self._log_install("Download abgeschlossen")
+                    target_root = top / DEFAULT_DIRS["sfm"] / "glomap"
+                    # Extract only 'bin/' from archive into target_root/bin
+                    try:
+                        import zipfile
+                        shutil.rmtree(target_root / "bin", ignore_errors=True)
+                        (target_root / "bin").mkdir(parents=True, exist_ok=True)
+                        with zipfile.ZipFile(archive, 'r') as zf:
+                            members = [n for n in zf.namelist() if n and not n.endswith('/')]
+                            for i, n in enumerate(members, 1):
+                                parts = [p for p in n.split('/') if p]
+                                if not parts:
+                                    continue
+                                if parts[0].lower() == 'bin':
+                                    rel = '/'.join(parts[1:])
+                                elif len(parts) >= 2 and parts[1].lower() == 'bin':
+                                    rel = '/'.join(parts[2:])
+                                else:
+                                    continue
+                                if not rel:
+                                    continue
+                                dest = (target_root / 'bin' / rel)
+                                dest.parent.mkdir(parents=True, exist_ok=True)
+                                with zf.open(n) as src, open(dest, 'wb') as dst:
+                                    shutil.copyfileobj(src, dst)
+                                _prog(len(members), i)
+                        self.install_progress.config(value=0)
+                        self._log_install("Install abgeschlossen")
+                        self._log_install(f"[WIN] GLOMAP bin extrahiert nach {target_root / 'bin'}")
+                    except Exception as e:
+                        self._log_install(f"[INSTALL] Fehler: Konnte GLOMAP bin nicht extrahieren: {e}")
+                    # (wrapper cleanup skipped; we extract bin directly)
+                    # move its contents up so that target_root/bin/... exists.
+                    try:
+                        if target_root.exists():
+                            _kids = [p for p in target_root.iterdir()]
+                            if len(_kids) == 1 and _kids[0].is_dir() and _kids[0].name.lower() != 'bin':
+                                _wrapper = _kids[0]
+                                for _item in _wrapper.iterdir():
+                                    shutil.move(str(_item), str(target_root / _item.name))
+                                _sh.rmtree(_wrapper, ignore_errors=True)
+                                self._log_install(f"[WIN] GLOMAP Wrapper '{_wrapper.name}' entfernt – Inhalte nach {target_root} verschoben.")
+                    except Exception as e:
+                        self._log_install(f"[INSTALL] Warnung: Konnte Wrapper nicht bereinigen: {e}")
+                
+                    if True:
+                        self._log_install(f"[WIN] GLOMAP entpackt nach {target_root}")
+                    # ANGLE/Software-OpenGL DLLs sicherstellen (Windows, nach COLMAP-Entpacken)
+                    try:
+                        colmap_dir = base_dir / '01 GLOMAP' / 'colmap'
+                        _win_ensure_angle_dlls(colmap_dir, sources_dir, self._log_install)
+                    except Exception as e:
+                        self._log_install(f"[INSTALL] Warnung: ANGLE-Ergänzung fehlgeschlagen: {e}")
+                
+                self._log_install("Installer-Durchlauf (Windows) beendet.")
+                try: self._auto_detect_tools()
+                except Exception: pass
+            except Exception as e:
+                success = False
+                self._log_install(f"[INSTALL] Fehler: {e}")
+            finally:
+                self.after(0, lambda: self._installer_done(win, success))
             return
-        # ===== Linux: batch dependency installation (single sudo prompt) =====
         if OS_NAME == "Linux":
             pm = _detect_pkg_manager()
             pkgs = set()
@@ -1838,6 +1847,17 @@ class AutoTrackerGUI(tk.Tk):
                         self._log_install("CMake Configure für GLOMAP fehlgeschlagen.")
 
         self._log_install("Installer-Durchlauf beendet."); self._auto_detect_tools()
+
+    def _installer_done(self, win, success):
+        """Finalize installer run and notify user (Windows only)."""
+        try:
+            win.destroy()
+        except Exception:
+            pass
+        if success:
+            tk.messagebox.showinfo("Info", self.S["installer_done_ok"])
+        else:
+            tk.messagebox.showerror("Error", self.S["installer_done_fail"])
 
     def test_tools(self):
         self.log.delete("1.0", "end"); self.log_line(self.S["tools_test_begin"])
