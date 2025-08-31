@@ -1273,19 +1273,17 @@ class AutoTrackerGUI(tk.Tk):
         note = ttk.Label(win, text=self.S["installer_note"], foreground="#555")
         note.pack(fill="x", padx=12, pady=8)
 
-        # Progressbar zur Anzeige von Download-/Kopiervorgängen unterhalb des Logs
-        if not hasattr(self, "install_progress"):
-            self.install_progress = ttk.Progressbar(self, mode="determinate")
-            self.install_progress.pack(fill="x", padx=10, pady=(0, 10))
-        else:
-            self.install_progress.config(value=0)
+        # Nur unter Windows: Fortschrittsbalken im Dialog anzeigen
+        if OS_NAME == "Windows":
+            self.install_progress = ttk.Progressbar(win, mode="determinate")
+            self.install_progress.pack(fill="x", padx=12, pady=(0, 8))
 
     def _log_install(self, msg):
         self.log_line("[INSTALL] " + msg)
 
     def _run_installer(self, win):
-        win.destroy()
         if getattr(self, "install_progress", None):
+            # Vor Start einmal zurücksetzen
             self.install_progress.config(value=0, maximum=0)
         threading.Thread(target=self._installer_worker, daemon=True).start()
 
