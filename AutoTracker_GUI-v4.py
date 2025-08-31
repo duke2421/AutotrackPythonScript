@@ -206,7 +206,6 @@ I18N = {
         "fps_all": "Alle Frames",
         "fps_every": "Jeden",
         "fps_every_suffix": "-ten Frame (z. B. 2 = halbe Frames)",
-        "fps_target": "Ziel-FPS",
         "fps_hint": "(z. B. 5, 10, 15)",
         "videos": "Videos",
         "add_videos": "Videos hinzufügen…",
@@ -292,7 +291,6 @@ I18N = {
         "fps_all": "All frames",
         "fps_every": "Every",
         "fps_every_suffix": "th frame (e.g., 2 = half the frames)",
-        "fps_target": "Target FPS",
         "fps_hint": "(e.g., 5, 10, 15)",
         "videos": "Videos",
         "add_videos": "Add videos…",
@@ -1003,16 +1001,14 @@ class AutoTrackerGUI(tk.Tk):
         self.lbl_overlap = ttk.Label(more_opts, text=self.S["seq_overlap"]); self.lbl_overlap.grid(row=0, column=4, sticky="w")
         ttk.Entry(more_opts, width=6, textvariable=self.seq_overlap_var).grid(row=0, column=5, sticky="w", padx=(4, 16))
 
-        self.fps_mode = tk.StringVar(value="all"); self.every_n_var = tk.StringVar(value="2"); self.target_fps_var = tk.StringVar(value="5")
+        self.fps_mode = tk.StringVar(value="all"); self.every_n_var = tk.StringVar(value="2")
         fps_frame = ttk.Frame(self.opts_frame); fps_frame.pack(fill="x", padx=8, pady=(0, 6))
         self.lbl_fps = ttk.Label(fps_frame, text=self.S["fps_title"]); self.lbl_fps.grid(row=0, column=0, sticky="w")
         self.rb_all = ttk.Radiobutton(fps_frame, text=self.S["fps_all"], variable=self.fps_mode, value="all"); self.rb_all.grid(row=1, column=0, sticky="w")
         self.rb_every = ttk.Radiobutton(fps_frame, text=self.S["fps_every"], variable=self.fps_mode, value="every"); self.rb_every.grid(row=1, column=1, sticky="w")
         self.entry_every = ttk.Entry(fps_frame, width=4, textvariable=self.every_n_var); self.entry_every.grid(row=1, column=2, sticky="w", padx=(4, 2))
         self.lbl_every_suf = ttk.Label(fps_frame, text=self.S["fps_every_suffix"]); self.lbl_every_suf.grid(row=1, column=3, sticky="w")
-        self.rb_target = ttk.Radiobutton(fps_frame, text=self.S["fps_target"], variable=self.fps_mode, value="target"); self.rb_target.grid(row=1, column=4, sticky="w", padx=(12, 0))
-        self.entry_target = ttk.Entry(fps_frame, width=6, textvariable=self.target_fps_var); self.entry_target.grid(row=1, column=5, sticky="w", padx=(4, 2))
-        self.lbl_fps_hint = ttk.Label(fps_frame, text=self.S["fps_hint"]); self.lbl_fps_hint.grid(row=1, column=6, sticky="w")
+        self.lbl_fps_hint = ttk.Label(fps_frame, text=self.S["fps_hint"]); self.lbl_fps_hint.grid(row=1, column=4, sticky="w", padx=(12, 0))
 
         # --- videos list ---
         self.videos_frame = ttk.LabelFrame(self, text=self.S["videos"]); self.videos_frame.pack(fill="both", expand=True, padx=10, pady=6)
@@ -1090,7 +1086,6 @@ class AutoTrackerGUI(tk.Tk):
         self.rb_all.configure(text=self.S["fps_all"])
         self.rb_every.configure(text=self.S["fps_every"])
         self.lbl_every_suf.configure(text=self.S["fps_every_suffix"])
-        self.rb_target.configure(text=self.S["fps_target"])
         self.lbl_fps_hint.configure(text=self.S["fps_hint"])
 
         self.videos_frame.configure(text=self.S["videos"])
@@ -1877,10 +1872,6 @@ class AutoTrackerGUI(tk.Tk):
             try: n = max(1, int(self.every_n_var.get().strip()))
             except ValueError: n = 2
             if n > 1: filters.append(f"select=not(mod(n\\,{n}))")
-        elif mode == "target":
-            try: tfps = float(self.target_fps_var.get().strip())
-            except ValueError: tfps = 5.0
-            if tfps > 0: filters.append(f"fps={tfps:g}")
         return filters if filters else None
 
     # --- ffmpeg Frame-Extraktion ---
