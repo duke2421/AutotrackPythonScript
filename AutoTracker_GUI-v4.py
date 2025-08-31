@@ -206,7 +206,6 @@ I18N = {
         "fps_all": "Alle Frames",
         "fps_every": "Jeden",
         "fps_every_suffix": "-ten Frame (z. B. 2 = halbe Frames)",
-        "fps_hint": "(z. B. 5, 10, 15)",
         "videos": "Videos",
         "add_videos": "Videos hinzufügen…",
         "remove_sel": "Auswahl entfernen",
@@ -291,7 +290,6 @@ I18N = {
         "fps_all": "All frames",
         "fps_every": "Every",
         "fps_every_suffix": "th frame (e.g., 2 = half the frames)",
-        "fps_hint": "(e.g., 5, 10, 15)",
         "videos": "Videos",
         "add_videos": "Add videos…",
         "remove_sel": "Remove selected",
@@ -1008,7 +1006,6 @@ class AutoTrackerGUI(tk.Tk):
         self.rb_every = ttk.Radiobutton(fps_frame, text=self.S["fps_every"], variable=self.fps_mode, value="every"); self.rb_every.grid(row=1, column=1, sticky="w")
         self.entry_every = ttk.Entry(fps_frame, width=4, textvariable=self.every_n_var); self.entry_every.grid(row=1, column=2, sticky="w", padx=(4, 2))
         self.lbl_every_suf = ttk.Label(fps_frame, text=self.S["fps_every_suffix"]); self.lbl_every_suf.grid(row=1, column=3, sticky="w")
-        self.lbl_fps_hint = ttk.Label(fps_frame, text=self.S["fps_hint"]); self.lbl_fps_hint.grid(row=1, column=4, sticky="w", padx=(12, 0))
 
         # --- videos list ---
         self.videos_frame = ttk.LabelFrame(self, text=self.S["videos"]); self.videos_frame.pack(fill="both", expand=True, padx=10, pady=6)
@@ -1086,7 +1083,6 @@ class AutoTrackerGUI(tk.Tk):
         self.rb_all.configure(text=self.S["fps_all"])
         self.rb_every.configure(text=self.S["fps_every"])
         self.lbl_every_suf.configure(text=self.S["fps_every_suffix"])
-        self.lbl_fps_hint.configure(text=self.S["fps_hint"])
 
         self.videos_frame.configure(text=self.S["videos"])
         self.btn_add_videos.configure(text=self.S["add_videos"])
