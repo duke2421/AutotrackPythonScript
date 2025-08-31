@@ -606,7 +606,7 @@ def is_archive_url(url: str) -> bool:
     u = url.lower()
     return u.endswith(".tar.gz") or u.endswith(".tgz") or u.endswith(".zip")
 
-def download_file(url: str, dest_file: Path, log_fn) -> bool:
+def download_file(url: str, dest_file: Path, log_fn, progress_cb=None) -> bool:
 
     try:
         log_fn(f"[dl] Lade {url} …")
@@ -630,7 +630,16 @@ def download_file(url: str, dest_file: Path, log_fn) -> bool:
                 else:
                     ctx = ssl.create_default_context()
             with urllib.request.urlopen(url, context=ctx, timeout=120) as r, open(dest_file, "wb") as f:
-                shutil.copyfileobj(r, f, length=1024*512)
+                total = int(r.headers.get("Content-Length", 0)) or 0
+                downloaded = 0
+                while True:
+                    chunk = r.read(1024 * 512)
+                    if not chunk:
+                        break
+                    f.write(chunk)
+                    downloaded += len(chunk)
+                    if progress_cb:
+                        progress_cb(total, downloaded)
             log_fn(f"[dl] Gespeichert: {dest_file}")
             return True
         except Exception as e1:
@@ -1264,11 +1273,20 @@ class AutoTrackerGUI(tk.Tk):
         note = ttk.Label(win, text=self.S["installer_note"], foreground="#555")
         note.pack(fill="x", padx=12, pady=8)
 
+        # Progressbar zur Anzeige von Download-/Kopiervorgängen unterhalb des Logs
+        if not hasattr(self, "install_progress"):
+            self.install_progress = ttk.Progressbar(self, mode="determinate")
+            self.install_progress.pack(fill="x", padx=10, pady=(0, 10))
+        else:
+            self.install_progress.config(value=0)
+
     def _log_install(self, msg):
         self.log_line("[INSTALL] " + msg)
 
     def _run_installer(self, win):
         win.destroy()
+        if getattr(self, "install_progress", None):
+            self.install_progress.config(value=0, maximum=0)
         threading.Thread(target=self._installer_worker, daemon=True).start()
 
     def _extras_for(self, pm, tool):
@@ -1301,7 +1319,7 @@ class AutoTrackerGUI(tk.Tk):
             extras = []
         return extras
 
-    def _win_copy_tool_bin(self, extracted_root: Path, exe_name: str, target_bin: Path, log_fn):
+    def _win_copy_tool_bin(self, extracted_root: Path, exe_name: str, target_bin: Path, log_fn, progress_cb=None):
         try:
             exe_path = None
             for p in extracted_root.rglob(exe_name):
@@ -1312,7 +1330,9 @@ class AutoTrackerGUI(tk.Tk):
                 return False
             src_dir = exe_path.parent
             target_bin.mkdir(parents=True, exist_ok=True)
-            for item in src_dir.iterdir():
+            items = list(src_dir.iterdir())
+            total = len(items)
+            for i, item in enumerate(items, 1):
                 dst = target_bin / item.name
                 try:
                     if item.is_dir():
@@ -1324,17 +1344,28 @@ class AutoTrackerGUI(tk.Tk):
                         shutil.copy2(item, dst)
                 except Exception:
                     pass
+                if progress_cb:
+                    progress_cb(total, i)
             log_fn(f"[WIN] Installiert: {exe_name} → {target_bin}")
             return True
         except Exception as e:
             log_fn(f"[WIN] Kopieren fehlgeschlagen für {exe_name}: {e}")
             return False
 
-    def _copytree_overwrite(self, src_dir, dst_dir):
+    def _copytree_overwrite(self, src_dir, dst_dir, progress_cb=None):
         src_dir = Path(src_dir)
         dst_dir = Path(dst_dir)
+        files = [p for p in src_dir.rglob('*') if p.is_file()]
+        total = len(files)
         dst_dir.mkdir(parents=True, exist_ok=True)
-        shutil.copytree(src_dir, dst_dir, dirs_exist_ok=True)
+        if progress_cb:
+            progress_cb(total, 0)
+        for i, f in enumerate(files, 1):
+            dest = dst_dir / f.relative_to(src_dir)
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(f, dest)
+            if progress_cb:
+                progress_cb(total, i)
 
         # --- Installer Worker ---
         # Führt Installationen im Hintergrund aus.
@@ -1426,6 +1457,22 @@ class AutoTrackerGUI(tk.Tk):
             sources_dir = top / DEFAULT_DIRS["sources"]
             colmap_src = sources_dir / "colmap"
             glomap_src = sources_dir / "glomap"
+            # Fortschritts-Callback für Downloads/Kopien
+            def _prog(total, done):
+                try:
+                    if total:
+                        self.install_progress.config(maximum=total)
+                    self.install_progress.config(value=done)
+                    self.update_idletasks()
+                except Exception:
+                    pass
+            def _remote_size(u: str) -> int:
+                try:
+                    from urllib.request import Request, urlopen
+                    with urlopen(Request(u, method='HEAD')) as r:
+                        return int(r.headers.get('Content-Length') or 0)
+                except Exception:
+                    return 0
             # URLs
             colmap_url_cuda = "https://github.com/colmap/colmap/releases/download/3.12.3/colmap-x64-windows-cuda.zip"
             colmap_url_nocuda = "https://github.com/colmap/colmap/releases/download/3.12.3/colmap-x64-windows-nocuda.zip"
@@ -1439,27 +1486,40 @@ class AutoTrackerGUI(tk.Tk):
                 self._log_install("[INSTALL] ffmpeg (Windows prebuilt)")
                 from urllib.parse import urlsplit
                 archive = sources_dir / Path(urlsplit(ffmpeg_url).path).name
-                download_file(ffmpeg_url, archive, self._log_install)
+                sz = _remote_size(ffmpeg_url)
+                if sz:
+                    self.install_progress.config(maximum=sz)
+                download_file(ffmpeg_url, archive, self._log_install, progress_cb=_prog)
+                self.install_progress.config(value=0)
+                self._log_install("Download abgeschlossen")
                 ff_src = extract_archive(archive, sources_dir / "ffmpeg", self._log_install)
                 if ff_src:
                     target_bin = top / DEFAULT_DIRS["ffmpeg"] / "bin"
-                    self._win_copy_tool_bin(ff_src, "ffmpeg.exe", target_bin, self._log_install)
+                    self._win_copy_tool_bin(ff_src, "ffmpeg.exe", target_bin, self._log_install, progress_cb=_prog)
+                    self.install_progress.config(value=0)
+                    self._log_install("Install abgeschlossen")
             # COLMAP
             if getattr(self, "inst_colmap", None) and self.inst_colmap.get():
                 url = colmap_url_cuda if want_cuda else colmap_url_nocuda
                 self._log_install(f"[INSTALL] COLMAP Quellen: {url}")
                 from urllib.parse import urlsplit
                 archive = sources_dir / Path(urlsplit(url).path).name
-                download_file(url, archive, self._log_install)
+                sz = _remote_size(url)
+                if sz:
+                    self.install_progress.config(maximum=sz)
+                download_file(url, archive, self._log_install, progress_cb=_prog)
+                self.install_progress.config(value=0)
+                self._log_install("Download abgeschlossen")
                 cm_src = extract_archive(archive, colmap_src, self._log_install)
                 if cm_src:
-                    # Copy FULL extracted content into 01 GLOMAP/colmap
                     children = [p for p in (cm_src).iterdir()]
                     colmap_root = cm_src
                     if len(children) == 1 and children[0].is_dir():
                         colmap_root = children[0]
                     target_root = top / DEFAULT_DIRS["sfm"] / "colmap"
-                    self._copytree_overwrite(colmap_root, target_root)
+                    self._copytree_overwrite(colmap_root, target_root, progress_cb=_prog)
+                    self.install_progress.config(value=0)
+                    self._log_install("Install abgeschlossen")
                     self._log_install(f"[WIN] COLMAP nach {target_root} kopiert.")
             # GLOMAP
             if getattr(self, "inst_glomap", None) and self.inst_glomap.get():
@@ -1467,7 +1527,12 @@ class AutoTrackerGUI(tk.Tk):
                 self._log_install(f"[INSTALL] GLOMAP Quellen: {url}")
                 from urllib.parse import urlsplit
                 archive = sources_dir / Path(urlsplit(url).path).name
-                download_file(url, archive, self._log_install)
+                sz = _remote_size(url)
+                if sz:
+                    self.install_progress.config(maximum=sz)
+                download_file(url, archive, self._log_install, progress_cb=_prog)
+                self.install_progress.config(value=0)
+                self._log_install("Download abgeschlossen")
                 target_root = top / DEFAULT_DIRS["sfm"] / "glomap"
                 # Extract only 'bin/' from archive into target_root/bin
                 try:
@@ -1475,9 +1540,8 @@ class AutoTrackerGUI(tk.Tk):
                     shutil.rmtree(target_root / "bin", ignore_errors=True)
                     (target_root / "bin").mkdir(parents=True, exist_ok=True)
                     with zipfile.ZipFile(archive, 'r') as zf:
-                        for n in zf.namelist():
-                            if not n or n.endswith('/'):
-                                continue
+                        members = [n for n in zf.namelist() if n and not n.endswith('/')]
+                        for i, n in enumerate(members, 1):
                             parts = [p for p in n.split('/') if p]
                             if not parts:
                                 continue
@@ -1493,6 +1557,9 @@ class AutoTrackerGUI(tk.Tk):
                             dest.parent.mkdir(parents=True, exist_ok=True)
                             with zf.open(n) as src, open(dest, 'wb') as dst:
                                 shutil.copyfileobj(src, dst)
+                            _prog(len(members), i)
+                    self.install_progress.config(value=0)
+                    self._log_install("Install abgeschlossen")
                     self._log_install(f"[WIN] GLOMAP bin extrahiert nach {target_root / 'bin'}")
                 except Exception as e:
                     self._log_install(f"[INSTALL] Fehler: Konnte GLOMAP bin nicht extrahieren: {e}")
