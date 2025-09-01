@@ -1881,12 +1881,9 @@ class AutoTrackerGUI(tk.Tk):
         colmap = self.colmap_entry.get_text()
         if colmap:
             self.log_line(f"[COLMAP] Pfad: {colmap}")
-            code, out = self._init_colmap_help(colmap); self.log_line(f"[COLMAP] exit={code}")
-            if self._colmap_help:
-                for line in self._colmap_help.splitlines()[:10]: self.log_line("  " + line)
-            for cmd in ("patch_match_stereo", "stereo_fusion", "poisson_mesher", "texture_mesher"):
-                if not self._colmap_has(cmd):
-                    self.log_line(f"[WARN] {cmd} nicht verfügbar; Schritt wird übersprungen.")
+            code, out = run_and_capture([colmap, "-h"]); self.log_line(f"[COLMAP] exit={code}")
+            if out:
+                for line in out.splitlines()[:10]: self.log_line("  " + line)
             code_fx, out_fx = run_and_capture([colmap, "feature_extractor", "-h"])
             code_sm, out_sm = run_and_capture([colmap, "sequential_matcher", "-h"])
             fx_gpu = "--SiftExtraction.use_gpu" in out_fx if out_fx else False
@@ -2030,21 +2027,18 @@ class AutoTrackerGUI(tk.Tk):
                "--input_path", in_path,
                "--image_path", img_dir,
                "--output_path", out_path]
-        self.log_line(" ".join(shlex.quote(c) for c in cmd)); return run_cmd(cmd, log_fn=self.log_line)
-
-    def _init_colmap_help(self, colmap):
-        if getattr(self, "_colmap_help", None) is not None:
-            return 0, self._colmap_help
-        code, out = run_and_capture([colmap, "help"])
-        self._colmap_help = out or ""
-        return code, self._colmap_help
-
-    def _colmap_has(self, name: str) -> bool:
-        return bool(name) and name in getattr(self, "_colmap_help", "")
+        self.log_line(" ".join(shlex.quote(c) for c in cmd))
+        code = run_cmd(cmd, log_fn=self.log_line)
+        if code != 0:
+            # Falls texture_mesher in dieser COLMAP-Version fehlt, nicht abbrechen
+            _, out = run_and_capture([colmap, "--help"])
+            if "texture_mesher" not in out:
+                self.log_line("[WARN] texture_mesher nicht verfügbar; Texturierung übersprungen.")
+                return 0
+        return code
 
     def _run_pipeline(self, videos, ffmpeg, colmap, glomap):
         try:
-            self._init_colmap_help(colmap)
             scenes_dir = Path(self.scenes_dir_var.get()); scenes_dir.mkdir(parents=True, exist_ok=True)
             overlap = int(self.seq_overlap_var.get().strip() or "15"); max_img = int(self.sift_max_img_var.get().strip() or "4096")
             use_gpu = bool(self.use_gpu_var.get()); cpu_cores = os.cpu_count() or 1
@@ -2083,39 +2077,24 @@ class AutoTrackerGUI(tk.Tk):
                         try:
                             self.log_line("[dense] image_undistorter…")
                             code = self._colmap_image_undistorter(colmap, str(img_dir), str(sub0), str(dense_dir))
-                            cmds = {
-                                c: self._colmap_has(c) for c in (
-                                    "patch_match_stereo", "stereo_fusion", "poisson_mesher", "texture_mesher")
-                            }
-                            for c, ok in cmds.items():
-                                if not ok:
-                                    self.log_line(f"[WARN] {c} nicht verfügbar; Schritt wird übersprungen.")
-                            skip = code != 0 or not cmds["patch_match_stereo"]
-                            if not skip:
+                            if code == 0:
                                 self.log_line("[dense] patch_match_stereo…")
                                 code = self._colmap_patch_match_stereo(colmap, str(dense_dir), max_img)
-                                skip = code != 0
-                            if not skip and cmds["stereo_fusion"]:
+                            if code == 0:
                                 self.log_line("[dense] stereo_fusion…")
                                 code = self._colmap_stereo_fusion(colmap, str(dense_dir), str(fused))
-                                skip = code != 0
-                            elif not skip:
-                                skip = True
-                            if not skip and cmds["poisson_mesher"]:
+                            if code == 0:
                                 self.log_line("[dense] poisson_mesher…")
                                 code = self._colmap_poisson_mesher(colmap, str(fused), str(mesh_p))
-                                skip = code != 0
-                            elif not skip:
-                                skip = True
-                            if not skip and cmds["texture_mesher"]:
+                            if code == 0:
                                 self.log_line("[dense] texture_mesher…")
                                 code = self._colmap_texture_mesh(colmap, str(mesh_p), str(dense_dir / "images"), str(textured))
-                                if code == 0 and textured.exists():
-                                    self.log_line(f"[dense] Mesh gespeichert: {textured.name}")
-                                skip = code != 0
-                            elif not skip:
-                                self.log_line("[dense] texture_mesher übersprungen.")
-                            if skip and code != 0:
+                                if code == 0:
+                                    if textured.exists():
+                                        self.log_line(f"[dense] Mesh gespeichert: {textured.name}")
+                                    else:
+                                        self.log_line("[dense] texture_mesher übersprungen.")
+                            if code != 0:
                                 self.log_line(f"[ERROR] Dense-Rekonstruktion fehlgeschlagen für {base}.")
                         finally:
                             for p in (fused, mesh_p):
