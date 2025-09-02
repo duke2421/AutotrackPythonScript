@@ -199,6 +199,7 @@ I18N = {
         "res_only_h": "Nur Höhe",
         "res_wh": "Breite × Höhe",
         "gpu_check": "GPU verwenden (falls unterstützt) – SIFT Extraction & Matching",
+        "mesh_cb": "Mesh-Erzeugung aktivieren (sehr langsam, hoher Speicherbedarf)",
         "jpeg_q": "JPEG-Qualität (-qscale:v):",
         "sift_max": "SiftExtraction.max_image_size:",
         "seq_overlap": "SequentialMatching.overlap:",
@@ -247,6 +248,10 @@ I18N = {
         "run_feat": "COLMAP feature_extractor…",
         "run_match": "COLMAP sequential_matcher…",
         "run_mapper": "Sparse Reconstruction (mapper)…",
+        "run_undistort": "COLMAP image_undistorter…",
+        "run_patchmatch": "COLMAP patch_match_stereo…",
+        "run_fuse": "COLMAP stereo_fusion…",
+        "run_mesher": "Mesh erzeugen (poisson_mesher)…",
         "done_all": "Alles erledigt.",
         "tools_test_begin": "### Tools testen ###",
         "tools_test_end": "### Test abgeschlossen ###",
@@ -285,6 +290,7 @@ I18N = {
         "res_only_h": "Height only",
         "res_wh": "Width × Height",
         "gpu_check": "Use GPU (if supported) – SIFT extraction & matching",
+        "mesh_cb": "Enable mesh reconstruction (very slow, high disk usage)",
         "jpeg_q": "JPEG quality (-qscale:v):",
         "sift_max": "SiftExtraction.max_image_size:",
         "seq_overlap": "SequentialMatching.overlap:",
@@ -333,6 +339,10 @@ I18N = {
         "run_feat": "COLMAP feature_extractor…",
         "run_match": "COLMAP sequential_matcher…",
         "run_mapper": "Sparse reconstruction (mapper)…",
+        "run_undistort": "COLMAP image_undistorter…",
+        "run_patchmatch": "COLMAP patch_match_stereo…",
+        "run_fuse": "COLMAP stereo_fusion…",
+        "run_mesher": "Mesh reconstruction (poisson_mesher)…",
         "done_all": "All done.",
         "tools_test_begin": "### Testing tools ###",
         "tools_test_end": "### Test finished ###",
@@ -1011,6 +1021,9 @@ class AutoTrackerGUI(tk.Tk):
         ttk.Entry(more_opts, width=8, textvariable=self.sift_max_img_var).grid(row=0, column=3, sticky="w", padx=(4, 16))
         self.lbl_overlap = ttk.Label(more_opts, text=self.S["seq_overlap"]); self.lbl_overlap.grid(row=0, column=4, sticky="w")
         ttk.Entry(more_opts, width=6, textvariable=self.seq_overlap_var).grid(row=0, column=5, sticky="w", padx=(4, 16))
+        self.mesh_var = tk.BooleanVar(value=False)
+        self.cb_mesh = ttk.Checkbutton(more_opts, text=self.S["mesh_cb"], variable=self.mesh_var)
+        self.cb_mesh.grid(row=1, column=0, columnspan=6, sticky="w", pady=(4,0))
 
         self.fps_mode = tk.StringVar(value="all"); self.every_n_var = tk.StringVar(value="2")
         fps_frame = ttk.Frame(self.opts_frame); fps_frame.pack(fill="x", padx=8, pady=(0, 6))
@@ -1092,6 +1105,7 @@ class AutoTrackerGUI(tk.Tk):
         self.lbl_jpeg.configure(text=self.S["jpeg_q"])
         self.lbl_sift.configure(text=self.S["sift_max"])
         self.lbl_overlap.configure(text=self.S["seq_overlap"])
+        self.cb_mesh.configure(text=self.S["mesh_cb"])
         self.lbl_fps.configure(text=self.S["fps_title"])
         self.rb_all.configure(text=self.S["fps_all"])
         self.rb_every.configure(text=self.S["fps_every"])
@@ -1993,37 +2007,78 @@ class AutoTrackerGUI(tk.Tk):
         cmd = [colmap, "model_converter", "--input_path", in_path, "--output_path", out_path, "--output_type", "TXT"]
         self.log_line(" ".join(shlex.quote(c) for c in cmd)); return run_cmd(cmd, log_fn=self.log_line)
 
+    def _colmap_image_undistorter(self, colmap, img_dir, sparse_dir, dense_dir):
+        cmd = [colmap, "image_undistorter", "--image_path", img_dir,
+               "--input_path", f"{sparse_dir}/0", "--output_path", dense_dir]
+        self.log_line(" ".join(shlex.quote(c) for c in cmd)); return run_cmd(cmd, log_fn=self.log_line)
+
+    def _colmap_patch_match_stereo(self, colmap, dense_dir):
+        cmd = [colmap, "patch_match_stereo", "--workspace_path", dense_dir,
+               "--workspace_format", "COLMAP"]
+        self.log_line(" ".join(shlex.quote(c) for c in cmd)); return run_cmd(cmd, log_fn=self.log_line)
+
+    def _colmap_stereo_fusion(self, colmap, dense_dir):
+        cmd = [colmap, "stereo_fusion", "--workspace_path", dense_dir,
+               "--workspace_format", "COLMAP", "--output_path", f"{dense_dir}/fused.ply"]
+        self.log_line(" ".join(shlex.quote(c) for c in cmd)); return run_cmd(cmd, log_fn=self.log_line)
+
+    def _colmap_poisson_mesher(self, colmap, dense_dir):
+        cmd = [colmap, "poisson_mesher", "--input_path", f"{dense_dir}/fused.ply",
+               "--output_path", f"{dense_dir}/meshed.ply"]
+        self.log_line(" ".join(shlex.quote(c) for c in cmd)); return run_cmd(cmd, log_fn=self.log_line)
+
     def _run_pipeline(self, videos, ffmpeg, colmap, glomap):
         try:
             scenes_dir = Path(self.scenes_dir_var.get()); scenes_dir.mkdir(parents=True, exist_ok=True)
             overlap = int(self.seq_overlap_var.get().strip() or "15"); max_img = int(self.sift_max_img_var.get().strip() or "4096")
-            use_gpu = bool(self.use_gpu_var.get())
+            use_gpu = bool(self.use_gpu_var.get()); do_mesh = bool(self.mesh_var.get())
+            steps_total = 8 if do_mesh else 4
             for i, video in enumerate(videos, start=1):
                 if self._stop_flag: break
                 vpath = Path(video); base = vpath.stem
                 self.log_line(f"\n=== Verarbeite ({i}/{len(videos)}): {base} ===")
                 scene_dir = scenes_dir / base; img_dir = scene_dir / "images"; sparse_dir = scene_dir / "sparse"; db_path = scene_dir / "database.db"
                 img_dir.mkdir(parents=True, exist_ok=True); sparse_dir.mkdir(parents=True, exist_ok=True)
-                self.log_line(f"[1/4] {self.S['run_extract']}")
+                step = 1
+                self.log_line(f"[{step}/{steps_total}] {self.S['run_extract']}"); step += 1
                 code = self._ffmpeg_extract(ffmpeg, str(vpath), str(img_dir))
                 if code != 0:
                     self.log_line(f"[ERROR] ffmpeg fehlgeschlagen für {base}. Überspringe."); self._advance_progress(i, len(videos)); continue
                 if not any(p.suffix.lower() == ".jpg" for p in img_dir.glob("*.jpg")):
                     self.log_line(f"[ERROR] Keine Frames extrahiert für {base}. Überspringe."); self._advance_progress(i, len(videos)); continue
-                self.log_line(f"[2/4] {self.S['run_feat']}")
+                self.log_line(f"[{step}/{steps_total}] {self.S['run_feat']}"); step += 1
                 code = self._colmap_feature_extractor(colmap, str(db_path), str(img_dir), max_img, use_gpu)
                 if code != 0:
                     self.log_line(f"[ERROR] feature_extractor fehlgeschlagen für {base}. Überspringe."); self._advance_progress(i, len(videos)); continue
-                self.log_line(f"[3/4] {self.S['run_match']}")
+                self.log_line(f"[{step}/{steps_total}] {self.S['run_match']}"); step += 1
                 code = self._colmap_sequential_matcher(colmap, str(db_path), overlap, use_gpu)
                 if code != 0:
                     self.log_line(f"[ERROR] sequential_matcher fehlgeschlagen für {base}. Überspringe."); self._advance_progress(i, len(videos)); continue
-                self.log_line(f"[4/4] {self.S['run_mapper']}")
+                self.log_line(f"[{step}/{steps_total}] {self.S['run_mapper']}"); step += 1
                 use_glomap = bool(glomap) and Path(glomap).exists()
                 code = self._glomap_mapper(glomap, str(db_path), str(img_dir), str(sparse_dir)) if use_glomap \
                        else self._colmap_mapper(colmap, str(db_path), str(img_dir), str(sparse_dir))
                 if code != 0:
                     self.log_line(f"[ERROR] mapper fehlgeschlagen für {base}. Überspringe."); self._advance_progress(i, len(videos)); continue
+                if do_mesh:
+                    dense_dir = scene_dir / "dense"
+                    dense_dir.mkdir(parents=True, exist_ok=True)
+                    self.log_line(f"[{step}/{steps_total}] {self.S['run_undistort']}"); step += 1
+                    code = self._colmap_image_undistorter(colmap, str(img_dir), str(sparse_dir), str(dense_dir))
+                    if code != 0:
+                        self.log_line(f"[ERROR] image_undistorter fehlgeschlagen für {base}. Überspringe."); self._advance_progress(i, len(videos)); continue
+                    self.log_line(f"[{step}/{steps_total}] {self.S['run_patchmatch']}"); step += 1
+                    code = self._colmap_patch_match_stereo(colmap, str(dense_dir))
+                    if code != 0:
+                        self.log_line(f"[ERROR] patch_match_stereo fehlgeschlagen für {base}. Überspringe."); self._advance_progress(i, len(videos)); continue
+                    self.log_line(f"[{step}/{steps_total}] {self.S['run_fuse']}"); step += 1
+                    code = self._colmap_stereo_fusion(colmap, str(dense_dir))
+                    if code != 0:
+                        self.log_line(f"[ERROR] stereo_fusion fehlgeschlagen für {base}. Überspringe."); self._advance_progress(i, len(videos)); continue
+                    self.log_line(f"[{step}/{steps_total}] {self.S['run_mesher']}"); step += 1
+                    code = self._colmap_poisson_mesher(colmap, str(dense_dir))
+                    if code != 0:
+                        self.log_line(f"[ERROR] poisson_mesher fehlgeschlagen für {base}. Überspringe."); self._advance_progress(i, len(videos)); continue
                 sub0 = sparse_dir / "0"
                 if sub0.exists():
                     self._colmap_model_converter(colmap, str(sub0), str(sub0)); self._colmap_model_converter(colmap, str(sub0), str(sparse_dir))
