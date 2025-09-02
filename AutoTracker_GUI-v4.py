@@ -202,7 +202,6 @@ I18N = {
         "jpeg_q": "JPEG-Qualität (-qscale:v):",
         "sift_max": "SiftExtraction.max_image_size:",
         "seq_overlap": "SequentialMatching.overlap:",
-        "mesh_check": "Texturiertes Mesh erzeugen",
         "fps_title": "Frame-Reduktion:",
         "fps_all": "Alle Frames",
         "fps_every": "Jeden",
@@ -289,7 +288,6 @@ I18N = {
         "jpeg_q": "JPEG quality (-qscale:v):",
         "sift_max": "SiftExtraction.max_image_size:",
         "seq_overlap": "SequentialMatching.overlap:",
-        "mesh_check": "Create textured mesh",
         "fps_title": "Frame reduction:",
         "fps_all": "All frames",
         "fps_every": "Every",
@@ -1013,9 +1011,6 @@ class AutoTrackerGUI(tk.Tk):
         ttk.Entry(more_opts, width=8, textvariable=self.sift_max_img_var).grid(row=0, column=3, sticky="w", padx=(4, 16))
         self.lbl_overlap = ttk.Label(more_opts, text=self.S["seq_overlap"]); self.lbl_overlap.grid(row=0, column=4, sticky="w")
         ttk.Entry(more_opts, width=6, textvariable=self.seq_overlap_var).grid(row=0, column=5, sticky="w", padx=(4, 16))
-        self.mesh_var = tk.BooleanVar(value=False)
-        self.cb_mesh = ttk.Checkbutton(more_opts, variable=self.mesh_var, text=self.S["mesh_check"])
-        self.cb_mesh.grid(row=1, column=0, columnspan=6, sticky="w")
 
         self.fps_mode = tk.StringVar(value="all"); self.every_n_var = tk.StringVar(value="2")
         fps_frame = ttk.Frame(self.opts_frame); fps_frame.pack(fill="x", padx=8, pady=(0, 6))
@@ -1097,7 +1092,6 @@ class AutoTrackerGUI(tk.Tk):
         self.lbl_jpeg.configure(text=self.S["jpeg_q"])
         self.lbl_sift.configure(text=self.S["sift_max"])
         self.lbl_overlap.configure(text=self.S["seq_overlap"])
-        self.cb_mesh.configure(text=self.S["mesh_check"])
         self.lbl_fps.configure(text=self.S["fps_title"])
         self.rb_all.configure(text=self.S["fps_all"])
         self.rb_every.configure(text=self.S["fps_every"])
@@ -1999,26 +1993,6 @@ class AutoTrackerGUI(tk.Tk):
         cmd = [colmap, "model_converter", "--input_path", in_path, "--output_path", out_path, "--output_type", "TXT"]
         self.log_line(" ".join(shlex.quote(c) for c in cmd)); return run_cmd(cmd, log_fn=self.log_line)
 
-    def _colmap_image_undistorter(self, colmap, img_dir, sparse_dir, out_dir):
-        cmd = [colmap, "image_undistorter", "--image_path", img_dir, "--input_path", sparse_dir, "--output_path", out_dir]
-        self.log_line(" ".join(shlex.quote(c) for c in cmd)); return run_cmd(cmd, log_fn=self.log_line)
-
-    def _colmap_patch_match_stereo(self, colmap, workspace):
-        cmd = [colmap, "patch_match_stereo", "--workspace_path", workspace]
-        self.log_line(" ".join(shlex.quote(c) for c in cmd)); return run_cmd(cmd, log_fn=self.log_line)
-
-    def _colmap_stereo_fusion(self, colmap, workspace, out_path):
-        cmd = [colmap, "stereo_fusion", "--workspace_path", workspace, "--output_path", out_path]
-        self.log_line(" ".join(shlex.quote(c) for c in cmd)); return run_cmd(cmd, log_fn=self.log_line)
-
-    def _colmap_poisson_mesher(self, colmap, in_path, out_path):
-        cmd = [colmap, "poisson_mesher", "--input_path", in_path, "--output_path", out_path]
-        self.log_line(" ".join(shlex.quote(c) for c in cmd)); return run_cmd(cmd, log_fn=self.log_line)
-
-    def _colmap_texture_mesh(self, colmap, in_path, img_dir, out_path):
-        cmd = [colmap, "texture_mesher", "--input_path", in_path, "--image_path", img_dir, "--output_path", out_path]
-        self.log_line(" ".join(shlex.quote(c) for c in cmd)); return run_cmd(cmd, log_fn=self.log_line)
-
     def _run_pipeline(self, videos, ffmpeg, colmap, glomap):
         try:
             scenes_dir = Path(self.scenes_dir_var.get()); scenes_dir.mkdir(parents=True, exist_ok=True)
@@ -2053,29 +2027,6 @@ class AutoTrackerGUI(tk.Tk):
                 sub0 = sparse_dir / "0"
                 if sub0.exists():
                     self._colmap_model_converter(colmap, str(sub0), str(sub0)); self._colmap_model_converter(colmap, str(sub0), str(sparse_dir))
-                    if self.mesh_var.get():
-                        dense_dir = scene_dir / "dense"; dense_dir.mkdir(parents=True, exist_ok=True)
-                        self.log_line("[dense] image_undistorter…")
-                        code = self._colmap_image_undistorter(colmap, str(img_dir), str(sub0), str(dense_dir))
-                        if code == 0:
-                            self.log_line("[dense] patch_match_stereo…")
-                            code = self._colmap_patch_match_stereo(colmap, str(dense_dir))
-                        if code == 0:
-                            fused = dense_dir / "fused.ply"
-                            self.log_line("[dense] stereo_fusion…")
-                            code = self._colmap_stereo_fusion(colmap, str(dense_dir), str(fused))
-                        if code == 0:
-                            mesh_p = dense_dir / "meshed.ply"
-                            self.log_line("[dense] poisson_mesher…")
-                            code = self._colmap_poisson_mesher(colmap, str(fused), str(mesh_p))
-                        if code == 0:
-                            textured = scene_dir / "textured.ply"
-                            self.log_line("[dense] texture_mesher…")
-                            code = self._colmap_texture_mesh(colmap, str(mesh_p), str(img_dir), str(textured))
-                            if code == 0:
-                                self.log_line(f"[dense] Mesh gespeichert: {textured.name}")
-                        if code != 0:
-                            self.log_line(f"[ERROR] Dense-Rekonstruktion fehlgeschlagen für {base}.")
                 self.log_line(f"✓ Fertig: {base}  ({i}/{len(videos)})"); self._advance_progress(i, len(videos))
             self.log_line("\\n" + self.S["done_all"])
         except Exception as e:
