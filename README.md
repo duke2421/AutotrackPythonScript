@@ -5,6 +5,7 @@ Polyfjord YT-Video: https://youtu.be/PhdEk_RxkGQ?si=pIKWHXnHLgVqP-ii
 ## Verwendung unter Windows
 
 Dieses Script automatisiert die Installation und Abwicklung von Tracking-Tools.
+Optional kann eine Mesh-Erzeugung über COLMAPs Poisson Mesher aktiviert werden (sehr langsam, hoher Speicherbedarf).
 
 1. Python 3 mit Tkinter installieren.
 2. Repository herunterladen und entpacken.
