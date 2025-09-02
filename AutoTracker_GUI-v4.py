@@ -2021,7 +2021,7 @@ class AutoTrackerGUI(tk.Tk):
 
     def _colmap_poisson_mesher(self, colmap, in_path, out_path, cpu_cores):
         cmd = [colmap, "poisson_mesher", "--input_path", in_path, "--output_path", out_path,
-               "--PoissonMeshing.num_threads", str(cpu_cores)]  # use correct option name
+               "--PoissonMesher.num_threads", str(cpu_cores)]
         self.log_line(" ".join(shlex.quote(c) for c in cmd)); return run_cmd(cmd, log_fn=self.log_line)
 
     def _colmap_texture_mesh(self, colmap, in_path, img_dir, out_path, cpu_cores):
