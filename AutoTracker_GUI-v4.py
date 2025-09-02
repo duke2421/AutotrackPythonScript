@@ -2006,20 +2006,21 @@ class AutoTrackerGUI(tk.Tk):
         cmd = [colmap, "image_undistorter", "--image_path", img_dir, "--input_path", sparse_dir, "--output_path", out_dir]
         self.log_line(" ".join(shlex.quote(c) for c in cmd)); return run_cmd(cmd, log_fn=self.log_line)
 
-    def _colmap_patch_match_stereo(self, colmap, workspace, max_img):
-        # gpu_index removed; rely on COLMAP's default GPU handling
+    def _colmap_patch_match_stereo(self, colmap, workspace, max_img, use_gpu):
+        # Use gpu_index (0 for enabled GPU, -1 for CPU fallback) since
+        # PatchMatchStereo.use_gpu is deprecated in recent COLMAP versions.
         cmd = [colmap, "patch_match_stereo", "--workspace_path", workspace,
-               "--PatchMatchStereo.max_image_size", str(max_img)]
+               "--PatchMatchStereo.max_image_size", str(max_img),
+               "--PatchMatchStereo.gpu_index", "0" if use_gpu else "-1"]
         self.log_line(" ".join(shlex.quote(c) for c in cmd)); return run_cmd(cmd, log_fn=self.log_line)
 
-    def _colmap_stereo_fusion(self, colmap, workspace, out_path):
-        # num_threads removed; use default thread count
-        cmd = [colmap, "stereo_fusion", "--workspace_path", workspace, "--output_path", out_path]
+    def _colmap_stereo_fusion(self, colmap, workspace, out_path, cpu_cores):
+        cmd = [colmap, "stereo_fusion", "--workspace_path", workspace, "--output_path", out_path,
+               "--StereoFusion.num_threads", str(cpu_cores)]
         self.log_line(" ".join(shlex.quote(c) for c in cmd)); return run_cmd(cmd, log_fn=self.log_line)
 
-    def _colmap_poisson_mesher(self, colmap, in_path, out_path):
-        # num_threads removed; use default thread count
-        cmd = [colmap, "poisson_mesher", "--input_path", in_path, "--output_path", out_path]
+    def _colmap_poisson_mesher(self, colmap, in_path, out_path, cpu_cores):
+        cmd = [colmap, "poisson_mesher", "--input_path", in_path, "--output_path", out_path]  # thread option removed
         self.log_line(" ".join(shlex.quote(c) for c in cmd)); return run_cmd(cmd, log_fn=self.log_line)
 
     def _texrecon_texture_mesh(self, colmap, in_path, img_dir, out_path, cpu_cores):
@@ -2071,13 +2072,13 @@ class AutoTrackerGUI(tk.Tk):
                             code = self._colmap_image_undistorter(colmap, str(img_dir), str(sub0), str(dense_dir))
                             if code == 0:
                                 self.log_line("[dense] patch_match_stereo…")
-                                code = self._colmap_patch_match_stereo(colmap, str(dense_dir), max_img)
+                                code = self._colmap_patch_match_stereo(colmap, str(dense_dir), max_img, use_gpu)
                             if code == 0:
                                 self.log_line("[dense] stereo_fusion…")
-                                code = self._colmap_stereo_fusion(colmap, str(dense_dir), str(fused))
+                                code = self._colmap_stereo_fusion(colmap, str(dense_dir), str(fused), cpu_cores)
                             if code == 0:
                                 self.log_line("[dense] poisson_mesher…")
-                                code = self._colmap_poisson_mesher(colmap, str(fused), str(mesh_p))
+                                code = self._colmap_poisson_mesher(colmap, str(fused), str(mesh_p), cpu_cores)
                             if code == 0:
                                 self.log_line("[dense] texture_mesher…")
                                 code = self._texrecon_texture_mesh(colmap, str(mesh_p), str(dense_dir / "images"), str(textured), cpu_cores)
