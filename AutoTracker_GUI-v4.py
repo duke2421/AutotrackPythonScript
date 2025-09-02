@@ -2007,11 +2007,9 @@ class AutoTrackerGUI(tk.Tk):
         self.log_line(" ".join(shlex.quote(c) for c in cmd)); return run_cmd(cmd, log_fn=self.log_line)
 
     def _colmap_patch_match_stereo(self, colmap, workspace, max_img, use_gpu):
-        # Use gpu_index (0 for enabled GPU, -1 for CPU fallback) since
-        # PatchMatchStereo.use_gpu is deprecated in recent COLMAP versions.
         cmd = [colmap, "patch_match_stereo", "--workspace_path", workspace,
                "--PatchMatchStereo.max_image_size", str(max_img),
-               "--PatchMatchStereo.gpu_index", "0" if use_gpu else "-1"]
+               "--PatchMatchStereo.use_gpu", "1" if use_gpu else "0"]
         self.log_line(" ".join(shlex.quote(c) for c in cmd)); return run_cmd(cmd, log_fn=self.log_line)
 
     def _colmap_stereo_fusion(self, colmap, workspace, out_path, cpu_cores):
