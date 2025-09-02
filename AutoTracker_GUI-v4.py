@@ -1014,10 +1014,7 @@ class AutoTrackerGUI(tk.Tk):
         self.lbl_overlap = ttk.Label(more_opts, text=self.S["seq_overlap"]); self.lbl_overlap.grid(row=0, column=4, sticky="w")
         ttk.Entry(more_opts, width=6, textvariable=self.seq_overlap_var).grid(row=0, column=5, sticky="w", padx=(4, 16))
         self.mesh_var = tk.BooleanVar(value=False)
-        self.cb_mesh = tk.Checkbutton(
-            more_opts, variable=self.mesh_var,
-            text=self.S["mesh_check"], wraplength=360, anchor="w", justify="left"
-        )
+        self.cb_mesh = ttk.Checkbutton(more_opts, variable=self.mesh_var, text=self.S["mesh_check"], wraplength=360)
         self.cb_mesh.grid(row=1, column=0, columnspan=6, sticky="w")
 
         self.fps_mode = tk.StringVar(value="all"); self.every_n_var = tk.StringVar(value="2")
