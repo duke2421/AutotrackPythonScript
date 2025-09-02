@@ -2023,11 +2023,9 @@ class AutoTrackerGUI(tk.Tk):
         cmd = [colmap, "poisson_mesher", "--input_path", in_path, "--output_path", out_path]  # thread option removed
         self.log_line(" ".join(shlex.quote(c) for c in cmd)); return run_cmd(cmd, log_fn=self.log_line)
 
-    def _texrecon_texture_mesh(self, colmap, in_path, img_dir, out_path, cpu_cores):
-        texrecon = Path(colmap).with_name("texrecon" + Path(colmap).suffix)
-        if not texrecon.exists():
-            self.log_line(f"[ERROR] texrecon nicht gefunden: {texrecon}"); return 1
-        cmd = [str(texrecon), "--max-threads", str(cpu_cores), in_path, img_dir, out_path]  # Parameter mit `texrecon --help` prüfen
+    def _colmap_texture_mesh(self, colmap, in_path, img_dir, out_path, cpu_cores):
+        cmd = [colmap, "texture_mesher", "--input_path", in_path, "--image_path", img_dir, "--output_path", out_path,
+               "--TextureMesher.num_threads", str(cpu_cores)]
         self.log_line(" ".join(shlex.quote(c) for c in cmd)); return run_cmd(cmd, log_fn=self.log_line)
 
     def _run_pipeline(self, videos, ffmpeg, colmap, glomap):
@@ -2081,7 +2079,7 @@ class AutoTrackerGUI(tk.Tk):
                                 code = self._colmap_poisson_mesher(colmap, str(fused), str(mesh_p), cpu_cores)
                             if code == 0:
                                 self.log_line("[dense] texture_mesher…")
-                                code = self._texrecon_texture_mesh(colmap, str(mesh_p), str(dense_dir / "images"), str(textured), cpu_cores)
+                                code = self._colmap_texture_mesh(colmap, str(mesh_p), str(img_dir), str(textured), cpu_cores)
                                 if code == 0:
                                     self.log_line(f"[dense] Mesh gespeichert: {textured.name}")
                             if code != 0:
