@@ -1056,7 +1056,7 @@ class AutoTrackerGUI(tk.Tk):
 
         self.log = tk.Text(self, height=16, wrap="word"); self.log.pack(fill="both", expand=False, padx=10, pady=(6, 10))
         self.top_dir_var.trace_add("write", self._on_top_changed)
-        self._maybe_offer_create_structure(); self._auto_detect_tools()
+        self._maybe_offer_create_structure(); self._auto_detect_tools(); self.load_existing_videos()  # populate video list
 
     # ---- language handlers ----
     def _on_lang_changed(self, *_):
@@ -1155,6 +1155,7 @@ class AutoTrackerGUI(tk.Tk):
         self._auto_detect_tools()
         self.settings["top_dir"] = str(top)  # persist selected top_dir
         save_settings(self.settings)
+        self.clear_videos(); self.load_existing_videos()  # refresh video list
 
     def _project_missing_dirs(self, top: Path):
         base_dirs = [top / DEFAULT_DIRS["sfm"], top / DEFAULT_DIRS["videos"], top / DEFAULT_DIRS["ffmpeg"], top / DEFAULT_DIRS["scenes"], top / DEFAULT_DIRS["sources"]]
@@ -1905,6 +1906,19 @@ class AutoTrackerGUI(tk.Tk):
         else: self.log_line("[GLOMAP] nicht gesetzt (optional).")
 
         self.log_line(self.S["tools_test_end"])
+
+    def load_existing_videos(self):
+        # scan project video directory and add found files once
+        vids_dir = Path(self.top_dir_var.get()) / DEFAULT_DIRS["videos"]
+        exts = {".mp4", ".mov", ".avi", ".mkv", ".m4v", ".wmv", ".mpg", ".mpeg"}
+        if vids_dir.exists():
+            existing = set(self.video_list.get(0, "end"))
+            for f in vids_dir.iterdir():
+                if f.is_file() and f.suffix.lower() in exts:
+                    p = str(f)
+                    if p not in existing:
+                        self.video_list.insert("end", p)
+                        existing.add(p)
 
     # ---- Video UI ----
     def add_videos(self):
