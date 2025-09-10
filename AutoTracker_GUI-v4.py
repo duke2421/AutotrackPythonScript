@@ -1910,11 +1910,14 @@ class AutoTrackerGUI(tk.Tk):
     def load_existing_videos(self):
         # scan project video directory and add found files once
         vids_dir = Path(self.top_dir_var.get()) / DEFAULT_DIRS["videos"]
+        scenes_dir = Path(self.top_dir_var.get()) / DEFAULT_DIRS["scenes"]
         exts = {".mp4", ".mov", ".avi", ".mkv", ".m4v", ".wmv", ".mpg", ".mpeg"}
         if vids_dir.exists():
             existing = set(self.video_list.get(0, "end"))
             for f in vids_dir.iterdir():
                 if f.is_file() and f.suffix.lower() in exts:
+                    if (scenes_dir / f.stem).exists():
+                        continue  # skip videos with an existing scene directory
                     p = str(f)
                     if p not in existing:
                         self.video_list.insert("end", p)
