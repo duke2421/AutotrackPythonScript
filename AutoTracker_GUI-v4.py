@@ -2198,7 +2198,28 @@ class AutoTrackerGUI(tk.Tk):
                     if pm == "pacman":
                         bla_vendor = "OpenBLAS"
                     vendor_arg = f"-DBLA_VENDOR={bla_vendor}"
-                    extra_args = [f"-DCMAKE_INSTALL_PREFIX={install_prefix}", vendor_arg] + cuda_args
+
+                    def _detect_eigen3_dir_arg():
+                        # Hilft der Ceres/Eigen-Konfiguration besonders auf Arch (z. B. CachyOS),
+                        # greift aber auch auf Debian/Ubuntu, weil /usr/share/eigen3/cmake identisch ist.
+                        if IS_WINDOWS:
+                            return None
+                        eigen_hint_dirs = [
+                            Path("/usr/share/eigen3/cmake"),
+                            Path("/usr/lib/cmake/eigen3"),
+                            Path("/usr/local/share/eigen3/cmake"),
+                            Path("/usr/local/lib/cmake/eigen3"),
+                        ]
+                        for base in eigen_hint_dirs:
+                            if (base / "Eigen3Config.cmake").exists():
+                                return f"-DEigen3_DIR={base}"
+                        return None
+
+                    eigen_dir_arg = _detect_eigen3_dir_arg()
+                    base_args = [f"-DCMAKE_INSTALL_PREFIX={install_prefix}", vendor_arg]
+                    if eigen_dir_arg:
+                        base_args.append(eigen_dir_arg)
+                    extra_args = base_args + cuda_args
                     code = cmake_configure_ninja(src_dir, build_dir, self._log_install, extra_args=extra_args)
                     if code != 0 and ("-DCUDA_ENABLED=ON" in cuda_args):
                         if pm == "pacman":
@@ -2208,6 +2229,8 @@ class AutoTrackerGUI(tk.Tk):
                         extra_args = [f"-DCMAKE_INSTALL_PREFIX={install_prefix}", "-DCUDA_ENABLED=OFF"]
                         if pm == "pacman":
                             extra_args.append(vendor_arg)
+                        if eigen_dir_arg:
+                            extra_args.append(eigen_dir_arg)
                         code = cmake_configure_ninja(src_dir, build_dir, self._log_install, extra_args=extra_args)
                     if code != 0:
                         if pm == "pacman":
@@ -2217,6 +2240,8 @@ class AutoTrackerGUI(tk.Tk):
                         extra_args = [f"-DCMAKE_INSTALL_PREFIX={install_prefix}"]
                         if pm == "pacman":
                             extra_args.append(vendor_arg)
+                        if eigen_dir_arg:
+                            extra_args.append(eigen_dir_arg)
                         code = cmake_configure_ninja(src_dir, build_dir, self._log_install, extra_args=extra_args)
                     if code == 0:
                         code = ninja_build(build_dir, self._log_install)
