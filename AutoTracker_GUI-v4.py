@@ -1387,6 +1387,20 @@ class AutoTrackerGUI(tk.Tk):
                 cmd = [aur_helper, "-S", "--needed", "--noconfirm", *missing]
                 self._log_install(f"[pacman] Starte {helper_name} für fehlende Pakete: {' '.join(missing)}")
                 aur_stdout = ""
+                aur_stdout_lines = []
+                preview_lines = []
+                suppressed_count = 0
+                logged_preview = False
+                prompt_markers = (
+                    "geben sie eine zahl ein",
+                    "enter a number",
+                    "choose a provider",
+                    "please choose a provider",
+                    "select a provider",
+                    "enter the number",
+                    "choose a number",
+                    "select a number",
+                )
                 # Kopie der Umgebung erlaubt es, Polkit-Variablen nur für yay/paru zu setzen.
                 env = os.environ.copy()
                 if shutil.which("pkexec") and (os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY")):
@@ -1404,7 +1418,32 @@ class AutoTrackerGUI(tk.Tk):
                         text=True,
                         env=env,
                     )
-                    aur_stdout, _ = proc.communicate("1\n" * len(missing))
+                    while True:
+                        line = proc.stdout.readline() if proc.stdout else ""
+                        if line == "":
+                            if proc.poll() is not None:
+                                break
+                            time.sleep(0.1)
+                            continue
+                        aur_stdout_lines.append(line)
+                        stripped = line.rstrip("\n")
+                        if len(preview_lines) < 10:
+                            preview_lines.append(stripped)
+                            self._log_install(f"[{helper_name}] {stripped}")
+                            logged_preview = True
+                        else:
+                            suppressed_count += 1
+                        lowered = stripped.casefold()
+                        if any(marker in lowered for marker in prompt_markers):
+                            try:
+                                if proc.stdin:
+                                    proc.stdin.write("1\n")
+                                    proc.stdin.flush()
+                            except Exception as exc:
+                                self._log_install(f"[pacman] Antwort auf {helper_name}-Prompt fehlgeschlagen: {exc}")
+                                break
+                    proc.wait()
+                    aur_stdout = "".join(aur_stdout_lines)
                 except Exception as exc:
                     self._log_install(f"[pacman] {helper_name} konnte nicht ausgeführt werden: {exc}")
                 else:
@@ -1416,11 +1455,14 @@ class AutoTrackerGUI(tk.Tk):
                         self._log_install(f"[pacman] Pakete fehlen weiterhin nach {helper_name}: {' '.join(still_missing)}")
                     else:
                         self._log_install(f"[pacman] {helper_name} meldete Fehlercode {proc.returncode}.")
-                        out = (aur_stdout or "").strip().splitlines()
-                        for line in out[:10]:
-                            self._log_install(f"[{helper_name}] {line}")
-                        if len(out) > 10:
-                            self._log_install(f"[{helper_name}] … {len(out) - 10} weitere Zeilen unterdrückt …")
+                        if not logged_preview:
+                            out = (aur_stdout or "").strip().splitlines()
+                            for line in out[:10]:
+                                self._log_install(f"[{helper_name}] {line}")
+                            if len(out) > 10:
+                                self._log_install(f"[{helper_name}] … {len(out) - 10} weitere Zeilen unterdrückt …")
+                        elif suppressed_count > 0:
+                            self._log_install(f"[{helper_name}] … {suppressed_count} weitere Zeilen unterdrückt …")
                 self._log_install("[pacman] Bitte installiere die Pakete manuell aus dem AUR (z. B. `yay -S freeimage metis`) und starte den Installer erneut.")
                 self._log_install("Installer abgebrochen – pacman-Pakete fehlen.")
                 return False
