@@ -1386,8 +1386,16 @@ class AutoTrackerGUI(tk.Tk):
                 helper_name = Path(aur_helper).name
                 cmd = [aur_helper, "-S", "--needed", "--noconfirm", *missing]
                 self._log_install(f"[pacman] Starte {helper_name} für fehlende Pakete: {' '.join(missing)}")
+                aur_stdout = ""
                 try:
-                    proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+                    proc = subprocess.Popen(
+                        cmd,
+                        stdin=subprocess.PIPE,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.STDOUT,
+                        text=True,
+                    )
+                    aur_stdout, _ = proc.communicate("1\n" * len(missing))
                 except Exception as exc:
                     self._log_install(f"[pacman] {helper_name} konnte nicht ausgeführt werden: {exc}")
                 else:
@@ -1399,7 +1407,7 @@ class AutoTrackerGUI(tk.Tk):
                         self._log_install(f"[pacman] Pakete fehlen weiterhin nach {helper_name}: {' '.join(still_missing)}")
                     else:
                         self._log_install(f"[pacman] {helper_name} meldete Fehlercode {proc.returncode}.")
-                        out = (proc.stdout or "").strip().splitlines()
+                        out = (aur_stdout or "").strip().splitlines()
                         for line in out[:10]:
                             self._log_install(f"[{helper_name}] {line}")
                         if len(out) > 10:
