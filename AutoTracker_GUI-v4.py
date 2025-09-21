@@ -1351,7 +1351,7 @@ class AutoTrackerGUI(tk.Tk):
             if tool == "glomap":
                 extras += ["freeimage-devel","libqt5-qtbase-devel","libqt5-qtopengl-devel"]
         elif pm == "pacman":
-            extras = ["sqlite","flann","glew","pkgconf","cgal","blas","lapack","metis"]
+            extras = ["sqlite","flann","glew","pkgconf","cgal","openblas","lapack","metis"]
             if tool == "glomap":
                 extras += ["freeimage","qt5-base"]
         elif pm == "apk":
@@ -2096,8 +2096,9 @@ class AutoTrackerGUI(tk.Tk):
                                  "freeimage-devel","glog-devel","gflags-devel","libqt5-qtbase-devel","libqt5-qtopengl-devel","ninja",
                                  "sqlite3-devel","flann-devel","glew-devel","pkgconf-pkg-config","cgal-devel","blas-devel","lapack-devel","metis-devel"])
                 elif pm == "pacman":
+                    # Arch/CachyOS: openblas statt des virtuellen „blas“, damit CMake echte BLAS-Libs findet.
                     pkgs.update(["base-devel","cmake","git","boost","eigen","suitesparse","ceres-solver","freeimage","google-glog","gflags","qt5-base","ninja",
-                                 "sqlite","flann","glew","pkgconf","cgal","blas","lapack","metis"])
+                                 "sqlite","flann","glew","pkgconf","cgal","openblas","lapack","metis"])
                 elif pm == "apk":
                     pkgs.update(["build-base","cmake","git","boost-dev","eigen-dev","suitesparse-dev","ceres-dev",
                                  "freeimage-dev","glog-dev","gflags-dev","qt5-qtbase-dev","ninja",
@@ -2193,15 +2194,29 @@ class AutoTrackerGUI(tk.Tk):
                         self._log_install("COLMAP: versuche CUDA-Build…")
                     elif "-DCUDA_ENABLED=OFF" in cuda_args:
                         self._log_install("COLMAP: CUDA deaktiviert (Konfigurationswahl/Heuristik).")
-                    extra_args = [f"-DCMAKE_INSTALL_PREFIX={install_prefix}", "-DBLA_VENDOR=Intel10_64lp"] + cuda_args
+                    bla_vendor = "Intel10_64lp"
+                    if pm == "pacman":
+                        bla_vendor = "OpenBLAS"
+                    vendor_arg = f"-DBLA_VENDOR={bla_vendor}"
+                    extra_args = [f"-DCMAKE_INSTALL_PREFIX={install_prefix}", vendor_arg] + cuda_args
                     code = cmake_configure_ninja(src_dir, build_dir, self._log_install, extra_args=extra_args)
                     if code != 0 and ("-DCUDA_ENABLED=ON" in cuda_args):
-                        self._log_install("Configure mit CUDA fehlgeschlagen – Fallback ohne -DBLA_VENDOR und ohne CUDA…")
+                        if pm == "pacman":
+                            self._log_install("Configure mit CUDA fehlgeschlagen – Fallback ohne CUDA (OpenBLAS bleibt gesetzt)…")
+                        else:
+                            self._log_install("Configure mit CUDA fehlgeschlagen – Fallback ohne -DBLA_VENDOR und ohne CUDA…")
                         extra_args = [f"-DCMAKE_INSTALL_PREFIX={install_prefix}", "-DCUDA_ENABLED=OFF"]
+                        if pm == "pacman":
+                            extra_args.append(vendor_arg)
                         code = cmake_configure_ninja(src_dir, build_dir, self._log_install, extra_args=extra_args)
                     if code != 0:
-                        self._log_install("Configure ohne CUDA, zusätzlicher Fallback ohne -DBLA_VENDOR…")
+                        if pm == "pacman":
+                            self._log_install("Configure ohne CUDA fehlgeschlagen – zusätzlicher Fallback mit OpenBLAS-Vendor…")
+                        else:
+                            self._log_install("Configure ohne CUDA, zusätzlicher Fallback ohne -DBLA_VENDOR…")
                         extra_args = [f"-DCMAKE_INSTALL_PREFIX={install_prefix}"]
+                        if pm == "pacman":
+                            extra_args.append(vendor_arg)
                         code = cmake_configure_ninja(src_dir, build_dir, self._log_install, extra_args=extra_args)
                     if code == 0:
                         code = ninja_build(build_dir, self._log_install)
