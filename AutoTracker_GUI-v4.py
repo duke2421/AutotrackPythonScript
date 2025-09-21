@@ -1355,10 +1355,65 @@ class AutoTrackerGUI(tk.Tk):
                 missing.append(name)
         if missing:
             self._log_install(f"[pacman] Pakete nicht in aktivierten Repositories gefunden: {' '.join(missing)}")
+            aur_helper = which_first(["yay", "paru"])  # finde verfügbaren AUR-Helper für eine mögliche Automatisierung
+            if aur_helper and self._ask_aur_helper_permission(aur_helper, missing):
+                helper_name = Path(aur_helper).name
+                cmd = [aur_helper, "-S", "--needed", *missing]
+                self._log_install(f"[pacman] Starte {helper_name} für fehlende Pakete: {' '.join(missing)}")
+                try:
+                    proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+                except Exception as exc:
+                    self._log_install(f"[pacman] {helper_name} konnte nicht ausgeführt werden: {exc}")
+                else:
+                    if proc.returncode == 0:
+                        self._log_install(f"[pacman] {helper_name} erfolgreich abgeschlossen.")
+                        still_missing = pkg_missing("pacman", missing, self._log_install)
+                        if not still_missing:
+                            return True
+                        self._log_install(f"[pacman] Pakete fehlen weiterhin nach {helper_name}: {' '.join(still_missing)}")
+                    else:
+                        self._log_install(f"[pacman] {helper_name} meldete Fehlercode {proc.returncode}.")
+                        out = (proc.stdout or "").strip().splitlines()
+                        for line in out[:10]:
+                            self._log_install(f"[{helper_name}] {line}")
+                        if len(out) > 10:
+                            self._log_install(f"[{helper_name}] … {len(out) - 10} weitere Zeilen unterdrückt …")
+                self._log_install("[pacman] Bitte installiere die Pakete manuell aus dem AUR (z. B. `yay -S freeimage metis`) und starte den Installer erneut.")
+                self._log_install("Installer abgebrochen – pacman-Pakete fehlen.")
+                return False
+            if not aur_helper:
+                self._log_install("[pacman] Kein unterstützter AUR-Helper (yay/paru) gefunden.")
+            else:
+                self._log_install("[pacman] Automatische AUR-Installation wurde abgelehnt.")
             self._log_install("[pacman] Bitte installiere die Pakete manuell aus dem AUR (z. B. `yay -S freeimage metis`) und starte den Installer erneut.")
             self._log_install("Installer abgebrochen – pacman-Pakete fehlen.")
             return False
         return True
+
+    def _ask_aur_helper_permission(self, helper_path, pkgs):
+        # Fragt threadsicher im UI-Thread nach, ob der gefundene AUR-Helper genutzt werden darf.
+        decision = {"ok": False}
+        evt = threading.Event()
+
+        def _prompt():
+            try:
+                helper_name = Path(helper_path).name
+                pkg_list = " ".join(pkgs)
+                msg = (f"{helper_name} wurde gefunden. "
+                       f"Darf der Installer jetzt `{helper_name} -S --needed {pkg_list}` ausführen?")
+                decision["ok"] = messagebox.askyesno("AUR-Installation", msg)
+            except Exception as exc:
+                self._log_install(f"[pacman] Rückfrage zur AUR-Installation fehlgeschlagen: {exc}")
+            finally:
+                evt.set()
+
+        try:
+            self.after(0, _prompt)
+            evt.wait()
+        except Exception as exc:
+            self._log_install(f"[pacman] Rückfrage konnte nicht angezeigt werden: {exc}")
+            return False
+        return decision["ok"]
 
     def _win_copy_tool_bin(self, extracted_root: Path, exe_name: str, target_bin: Path, log_fn, progress_cb=None):
         try:
