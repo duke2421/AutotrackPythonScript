@@ -1387,6 +1387,14 @@ class AutoTrackerGUI(tk.Tk):
                 cmd = [aur_helper, "-S", "--needed", "--noconfirm", *missing]
                 self._log_install(f"[pacman] Starte {helper_name} für fehlende Pakete: {' '.join(missing)}")
                 aur_stdout = ""
+                # Kopie der Umgebung erlaubt es, Polkit-Variablen nur für yay/paru zu setzen.
+                env = os.environ.copy()
+                if shutil.which("pkexec") and (os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY")):
+                    # Sobald eine grafische Session läuft, sollen yay/paru selbst pkexec nutzen.
+                    if helper_name.lower() == "paru":
+                        env["PARU_SUDO"] = "pkexec"
+                    elif helper_name.lower() == "yay":
+                        env["YAY_SUDO"] = "pkexec"
                 try:
                     proc = subprocess.Popen(
                         cmd,
@@ -1394,6 +1402,7 @@ class AutoTrackerGUI(tk.Tk):
                         stdout=subprocess.PIPE,
                         stderr=subprocess.STDOUT,
                         text=True,
+                        env=env,
                     )
                     aur_stdout, _ = proc.communicate("1\n" * len(missing))
                 except Exception as exc:
