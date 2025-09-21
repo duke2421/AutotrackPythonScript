@@ -394,9 +394,22 @@ def _tk_install_command(pm):
     return None
 
 def _sudo_wrap(cmd):
-    # prefer GUI polkit if present (pkexec)
-    if shutil.which("pkexec"): return ["pkexec", "bash", "-lc", cmd]
-    if shutil.which("sudo"):  return ["sudo", "bash", "-lc", cmd]
+    """Return escalated command list or None when no graphical polkit is available."""
+    if OS_NAME == "Linux":
+        display = os.environ.get("DISPLAY")
+        wayland = os.environ.get("WAYLAND_DISPLAY")
+        pkexec = shutil.which("pkexec")
+        if pkexec and (display or wayland):
+            env_args = ["env"]
+            # keep GUI session vars so pkexec can talk to the running desktop
+            for key in ("DISPLAY", "WAYLAND_DISPLAY", "XAUTHORITY", "XDG_RUNTIME_DIR", "DBUS_SESSION_BUS_ADDRESS"):
+                val = os.environ.get(key)
+                if val:
+                    env_args.append(f"{key}={val}")
+            return [pkexec, *env_args, "bash", "-lc", cmd]
+        return None  # no graphical helper detected -> caller must instruct manual install
+    if shutil.which("sudo"):
+        return ["sudo", "bash", "-lc", cmd]
     return ["bash", "-lc", cmd]
 
 def ensure_tkinter():
@@ -411,17 +424,25 @@ def ensure_tkinter():
         if not cmd:
             sys.stderr.write("No supported package manager detected. Install Tkinter manually.\n")
             return False
-        # Ask in terminal (pre-GUI). pkexec/sudo will open GUI prompt if available.
+        # Ask in terminal (pre-GUI). pkexec will open GUI prompt if available.
         sys.stderr.write(f"Detected package manager: {pm}\nInstall Tkinter now? [Y/n]: ")
         try: choice = input().strip().lower()
         except EOFError: choice = "y"
         if choice in ("", "y", "yes", "j", "ja"):
-            res = subprocess.run(_sudo_wrap(cmd))
-            if res.returncode != 0:
-                sys.stderr.write(f"Installation failed (code {res.returncode}). Manually run:\n  {cmd}\n")
+            wrapped = _sudo_wrap(cmd)
+            if wrapped is None:
+                # When no graphical helper is present we stop auto-installation and tell the user.
+                sys.stderr.write(f"No graphical polkit helper detected. Please run manually:\n  {cmd}\n")
+                return False
+            sys.stderr.write(f"Invoking package installation via:\n  {' '.join(shlex.quote(x) for x in wrapped)}\n")
+            try:
+                subprocess.run(wrapped, check=True)
+            except subprocess.CalledProcessError as exc:
+                sys.stderr.write(f"Installation failed (code {exc.returncode}). Manually run:\n  {cmd}\n")
                 return False
             try:
                 import importlib; importlib.import_module("tkinter")
+                sys.stderr.write("Tkinter installation succeeded. Restarting GUI…\n")
                 os.execv(sys.executable, [sys.executable] + sys.argv)
             except (ModuleNotFoundError, ImportError):  # handle libtk import failures as well
                 sys.stderr.write("Tkinter still cannot be imported.\n")
@@ -597,7 +618,12 @@ def pkg_install(pm, pkgs, log_fn):
     else:
         return 1
     log_fn(f"[pkg] {cmd}")
-    return subprocess.run(_sudo_wrap(cmd)).returncode
+    wrapped = _sudo_wrap(cmd)
+    if wrapped is None:
+        # Without pkexec (graphical helper) we cannot elevate automatically.
+        log_fn(f"[pkg] Kein grafischer Polkit-Helfer gefunden. Bitte manuell ausführen: {cmd}")
+        return 1
+    return subprocess.run(wrapped).returncode
 
 def log_cmd(cmd, log_fn, cwd=None):
     txt = " ".join(shlex.quote(str(c)) for c in cmd)
