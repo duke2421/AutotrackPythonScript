@@ -1391,22 +1391,44 @@ class AutoTrackerGUI(tk.Tk):
             aur_helper = which_first(["yay", "paru"])  # finde verfügbaren AUR-Helper für eine mögliche Automatisierung
             if aur_helper and self._ask_aur_helper_permission(aur_helper, missing):
                 helper_name = Path(aur_helper).name
-                cmd = [aur_helper, "-S", "--needed", "--noconfirm", *missing]
+                cmd = [aur_helper, "-S", "--needed", "--noconfirm", "--skipreview"]
+                # Unterdrücke Review-/Diff-Abfragen und halte sudo aktiv, falls der Helper dies unterstützt.
+                supports_sudoloop = False
+                try:
+                    help_probe = subprocess.run(
+                        [aur_helper, "--help"],
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE,
+                        text=True,
+                    )
+                except Exception:
+                    help_text = ""
+                else:
+                    help_text = f"{help_probe.stdout or ''}{help_probe.stderr or ''}"
+                    supports_sudoloop = "--sudoloop" in help_text
+                if supports_sudoloop:
+                    cmd.append("--sudoloop")
+                cmd.extend(missing)
                 self._log_install(f"[pacman] Starte {helper_name} für fehlende Pakete: {' '.join(missing)}")
                 aur_stdout = ""
                 aur_stdout_lines = []
                 preview_lines = []
                 suppressed_count = 0
                 logged_preview = False
+                # Automatisiere Standardantworten auf yay/paru-Rückfragen (Providerwahl, Review, PKGBUILD-Bearbeitung).
                 prompt_markers = (
-                    "geben sie eine zahl ein",
-                    "enter a number",
-                    "choose a provider",
-                    "please choose a provider",
-                    "select a provider",
-                    "enter the number",
-                    "choose a number",
-                    "select a number",
+                    ("edit pkgbuild", "n\n"),
+                    ("diff view", "\n"),
+                    ("pkgbuild", "\n"),
+                    ("[y/n]", "\n"),
+                    ("geben sie eine zahl ein", "1\n"),
+                    ("enter a number", "1\n"),
+                    ("choose a provider", "1\n"),
+                    ("please choose a provider", "1\n"),
+                    ("select a provider", "1\n"),
+                    ("enter the number", "1\n"),
+                    ("choose a number", "1\n"),
+                    ("select a number", "1\n"),
                 )
                 # Kopie der Umgebung erlaubt es, Polkit-Variablen nur für yay/paru zu setzen.
                 env = os.environ.copy()
@@ -1441,13 +1463,14 @@ class AutoTrackerGUI(tk.Tk):
                         else:
                             suppressed_count += 1
                         lowered = stripped.casefold()
-                        if any(marker in lowered for marker in prompt_markers):
-                            try:
-                                if proc.stdin:
-                                    proc.stdin.write("1\n")
-                                    proc.stdin.flush()
-                            except Exception as exc:
-                                self._log_install(f"[pacman] Antwort auf {helper_name}-Prompt fehlgeschlagen: {exc}")
+                        for marker, response in prompt_markers:
+                            if marker in lowered:
+                                try:
+                                    if proc.stdin:
+                                        proc.stdin.write(response)
+                                        proc.stdin.flush()
+                                except Exception as exc:
+                                    self._log_install(f"[pacman] Antwort auf {helper_name}-Prompt fehlgeschlagen: {exc}")
                                 break
                     proc.wait()
                     aur_stdout = "".join(aur_stdout_lines)
@@ -1470,6 +1493,46 @@ class AutoTrackerGUI(tk.Tk):
                                 self._log_install(f"[{helper_name}] … {len(out) - 10} weitere Zeilen unterdrückt …")
                         elif suppressed_count > 0:
                             self._log_install(f"[{helper_name}] … {suppressed_count} weitere Zeilen unterdrückt …")
+                        retry_decision = {"ok": False}
+                        retry_evt = threading.Event()
+
+                        def _ask_retry():
+                            try:
+                                msg = (f"{helper_name} konnte die Pakete nicht automatisch installieren.\n"
+                                       "Soll ein zweiter Versuch direkt im Terminal gestartet werden?")
+                                retry_decision["ok"] = messagebox.askyesno("AUR-Installation", msg)
+                            except Exception as exc:
+                                self._log_install(f"[pacman] Rückfrage für Terminal-Wiederholung fehlgeschlagen: {exc}")
+                            finally:
+                                retry_evt.set()
+
+                        try:
+                            self.after(0, _ask_retry)
+                            retry_evt.wait()
+                        except Exception as exc:
+                            self._log_install(f"[pacman] Rückfrage konnte nicht angezeigt werden: {exc}")
+                        if retry_decision["ok"]:
+                            self._log_install(
+                                f"[pacman] Starte {helper_name} erneut – Eingaben jetzt direkt im Terminal erforderlich."
+                            )
+                            try:
+                                retry_proc = subprocess.run(cmd, check=False, env=env)
+                            except Exception as exc:
+                                self._log_install(f"[pacman] Interaktiver {helper_name}-Aufruf fehlgeschlagen: {exc}")
+                            else:
+                                if retry_proc.returncode == 0:
+                                    self._log_install(f"[pacman] {helper_name} im Terminal erfolgreich abgeschlossen.")
+                                else:
+                                    self._log_install(
+                                        f"[pacman] {helper_name} beendete sich im Terminal mit Fehlercode {retry_proc.returncode}."
+                                    )
+                                # Nach dem manuellen Versuch erneut prüfen, ob weiterhin Pakete fehlen.
+                                still_missing = pkg_missing("pacman", missing, self._log_install)
+                                if not still_missing:
+                                    return True
+                                self._log_install(
+                                    f"[pacman] Pakete fehlen weiterhin nach dem Terminal-Lauf von {helper_name}: {' '.join(still_missing)}"
+                                )
                 self._log_install("[pacman] Bitte installiere die Pakete manuell aus dem AUR (z. B. `yay -S freeimage metis`) und starte den Installer erneut.")
                 self._log_install("Installer abgebrochen – pacman-Pakete fehlen.")
                 return False
