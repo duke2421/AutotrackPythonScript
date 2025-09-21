@@ -900,23 +900,36 @@ def _ensure_local_eigen34(top_dir: Path, log_fn):
                 log_fn("COLMAP: Eigen 3.4.0 konnte nicht vorbereitet werden (Download/Entpacken fehlgeschlagen).")
             return (None, None)
         src = Path(src)
-        cmake_dir = src / "cmake"
-        include_dir = src / "include" / "eigen3"
-        include_dir.mkdir(parents=True, exist_ok=True)
-        for name in ("Eigen", "unsupported"):
-            entry = src / name
-            if entry.exists():
-                target = include_dir / name
-                if entry.is_dir():
-                    shutil.copytree(entry, target, dirs_exist_ok=True)
-                else:
-                    shutil.copy2(entry, target)
-        signature = src / "signature_of_eigen3_matrix_library"
-        if signature.exists():
-            shutil.copy2(signature, include_dir / signature.name)
-        if not cmake_dir.exists():
+        build_dir = src / "_build"
+        install_dir = src / "_install"
+        if install_dir.exists():
+            shutil.rmtree(install_dir, ignore_errors=True)
+        install_dir.mkdir(parents=True, exist_ok=True)
+        extra_args = ["-DBUILD_TESTING=OFF", f"-DCMAKE_INSTALL_PREFIX={str(install_dir)}"]
+        code = cmake_configure_ninja(src, build_dir, log_fn, extra_args=extra_args)
+        if code != 0:
             if log_fn:
-                log_fn("COLMAP: Eigen 3.4.0 cmake-Verzeichnis fehlt – lokaler Fallback kann nicht verwendet werden.")
+                log_fn("COLMAP: Eigen 3.4.0 CMake Configure fehlgeschlagen.")
+            return (None, None)
+        code = ninja_install(build_dir, log_fn)
+        if code != 0:
+            if log_fn:
+                log_fn("COLMAP: `ninja install` für Eigen 3.4.0 fehlgeschlagen.")
+            return (None, None)
+        cmake_dir = install_dir / "share" / "eigen3" / "cmake"
+        if not cmake_dir.exists():
+            alt_cmake_dir = install_dir / "lib" / "cmake" / "eigen3"
+            if alt_cmake_dir.exists():
+                cmake_dir = alt_cmake_dir
+        config_file = cmake_dir / "Eigen3Config.cmake"
+        include_dir = install_dir / "include" / "eigen3"
+        if not cmake_dir.exists() or not config_file.exists():
+            if log_fn:
+                log_fn("COLMAP: Eigen 3.4.0 Installations-CMake-Verzeichnis fehlt oder ist unvollständig.")
+            return (None, None)
+        if not include_dir.exists():
+            if log_fn:
+                log_fn("COLMAP: Eigen 3.4.0 Installations-Include-Verzeichnis fehlt.")
             return (None, None)
         if log_fn:
             log_fn(f"COLMAP: Verwende mitgeliefertes Eigen 3.4.0 (cmake: {cmake_dir}, include: {include_dir}).")
