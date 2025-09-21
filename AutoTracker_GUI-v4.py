@@ -1381,6 +1381,13 @@ class AutoTrackerGUI(tk.Tk):
                 missing.append(name)
         if missing:
             self._log_install(f"[pacman] Pakete nicht in aktivierten Repositories gefunden: {' '.join(missing)}")
+            # Sorge dafür, dass grundlegende Build-Werkzeuge vor dem AUR-Helper verfügbar sind.
+            prereqs = [name for name in ("base-devel", "git") if name in pkgs]
+            if prereqs:
+                self._log_install(f"[pacman] Stelle Build-Voraussetzungen für AUR bereit: {' '.join(prereqs)}")
+                if pkg_install("pacman", prereqs, self._log_install) != 0:
+                    self._log_install("[pacman] Installation der Build-Voraussetzungen fehlgeschlagen – Installer abgebrochen.")
+                    return False
             aur_helper = which_first(["yay", "paru"])  # finde verfügbaren AUR-Helper für eine mögliche Automatisierung
             if aur_helper and self._ask_aur_helper_permission(aur_helper, missing):
                 helper_name = Path(aur_helper).name
