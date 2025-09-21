@@ -1410,11 +1410,6 @@ class AutoTrackerGUI(tk.Tk):
                     cmd.append("--sudoloop")
                 cmd.extend(missing)
                 self._log_install(f"[pacman] Starte {helper_name} für fehlende Pakete: {' '.join(missing)}")
-                aur_stdout = ""
-                aur_stdout_lines = []
-                preview_lines = []
-                suppressed_count = 0
-                logged_preview = False
                 # Automatisiere Standardantworten auf yay/paru-Rückfragen (Providerwahl, Review, PKGBUILD-Bearbeitung).
                 prompt_markers = (
                     ("edit pkgbuild", "n\n"),
@@ -1438,53 +1433,157 @@ class AutoTrackerGUI(tk.Tk):
                         env["PARU_SUDO"] = "pkexec"
                     elif helper_name.lower() == "yay":
                         env["YAY_SUDO"] = "pkexec"
-                try:
-                    proc = subprocess.Popen(
-                        cmd,
-                        stdin=subprocess.PIPE,
-                        stdout=subprocess.PIPE,
-                        stderr=subprocess.STDOUT,
-                        text=True,
-                        env=env,
-                    )
-                    while True:
-                        line = proc.stdout.readline() if proc.stdout else ""
-                        if line == "":
-                            if proc.poll() is not None:
-                                break
-                            time.sleep(0.1)
-                            continue
-                        aur_stdout_lines.append(line)
-                        stripped = line.rstrip("\n")
-                        if len(preview_lines) < 10:
-                            preview_lines.append(stripped)
-                            self._log_install(f"[{helper_name}] {stripped}")
-                            logged_preview = True
-                        else:
-                            suppressed_count += 1
-                        lowered = stripped.casefold()
-                        for marker, response in prompt_markers:
-                            if marker in lowered:
+
+                base_cmd = cmd.copy()
+                pkg_arg_index = len(base_cmd) - len(missing)
+                supports_rebuild_flag = "--rebuild" in help_text
+                supports_redownload_flag = "--redownload" in help_text
+
+                def _run_helper_with_prompts(cmd_args):
+                    """Führt den AUR-Helper mit Prompt-Antworten aus und liefert Ausgaben zurück."""
+                    aur_stdout_lines = []
+                    preview_lines = []
+                    suppressed_count = 0
+                    logged_preview = False
+                    try:
+                        proc_local = subprocess.Popen(
+                            cmd_args,
+                            stdin=subprocess.PIPE,
+                            stdout=subprocess.PIPE,
+                            stderr=subprocess.STDOUT,
+                            text=True,
+                            env=env,
+                        )
+                        while True:
+                            line = proc_local.stdout.readline() if proc_local.stdout else ""
+                            if line == "":
+                                if proc_local.poll() is not None:
+                                    break
+                                time.sleep(0.1)
+                                continue
+                            aur_stdout_lines.append(line)
+                            stripped = line.rstrip("\n")
+                            if len(preview_lines) < 10:
+                                preview_lines.append(stripped)
+                                self._log_install(f"[{helper_name}] {stripped}")
+                                logged_preview = True
+                            else:
+                                suppressed_count += 1
+                            lowered = stripped.casefold()
+                            for marker, response in prompt_markers:
+                                if marker in lowered:
+                                    try:
+                                        if proc_local.stdin:
+                                            proc_local.stdin.write(response)
+                                            proc_local.stdin.flush()
+                                    except Exception as exc:
+                                        self._log_install(f"[pacman] Antwort auf {helper_name}-Prompt fehlgeschlagen: {exc}")
+                                    break
+                        proc_local.wait()
+                        return (
+                            proc_local.returncode,
+                            "".join(aur_stdout_lines),
+                            logged_preview,
+                            suppressed_count,
+                            None,
+                        )
+                    except Exception as exc:
+                        self._log_install(f"[pacman] {helper_name} konnte nicht ausgeführt werden: {exc}")
+                        return (None, "", False, 0, exc)
+
+                retcode, aur_stdout, logged_preview, suppressed_count, run_exc = _run_helper_with_prompts(base_cmd)
+                if run_exc is None and retcode == 0:
+                    self._log_install(f"[pacman] {helper_name} erfolgreich abgeschlossen.")
+                    still_missing = pkg_missing("pacman", missing, self._log_install)
+                    if not still_missing:
+                        return True
+                    self._log_install(f"[pacman] Pakete fehlen weiterhin nach {helper_name}: {' '.join(still_missing)}")
+                elif run_exc is None and retcode is not None:
+                    # Prüfe auf SourceForge-Resume-Fehler, damit ein automatischer Neuversuch gestartet werden kann.
+                    lower_stdout = aur_stdout.casefold()
+                    sf_resume_error = any(marker in lower_stdout for marker in ("curl: (33", "cannot resume"))
+                    if sf_resume_error:
+                        self._log_install(
+                            f"[pacman] {helper_name} meldete mögliche SourceForge-Resume-Probleme – bereinige Cache und versuche es erneut."
+                        )
+                        cache_home = Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache"))
+                        helper_cache_root = cache_home / helper_name.lower() / "clone"
+                        cleaned_any = False
+                        patterns = ["*.part", "*.PART", "*.aria2", "*.crdownload"]
+                        for pkg_name in missing:
+                            pkg_cache_dir = helper_cache_root / pkg_name
+                            if not pkg_cache_dir.exists():
+                                continue
+                            removed_items = []
+                            for pattern in patterns:
+                                for leftover in pkg_cache_dir.rglob(pattern):
+                                    try:
+                                        if leftover.is_dir():
+                                            shutil.rmtree(leftover, ignore_errors=True)
+                                        else:
+                                            leftover.unlink()
+                                        removed_items.append(leftover.name)
+                                    except Exception as exc:
+                                        self._log_install(
+                                            f"[pacman] Bereinigung von {leftover} fehlgeschlagen: {exc}"
+                                        )
+                            targeted = pkg_cache_dir / "FreeImage3180.zip"
+                            if targeted.exists():
                                 try:
-                                    if proc.stdin:
-                                        proc.stdin.write(response)
-                                        proc.stdin.flush()
+                                    targeted.unlink()
+                                    removed_items.append(targeted.name)
                                 except Exception as exc:
-                                    self._log_install(f"[pacman] Antwort auf {helper_name}-Prompt fehlgeschlagen: {exc}")
-                                break
-                    proc.wait()
-                    aur_stdout = "".join(aur_stdout_lines)
-                except Exception as exc:
-                    self._log_install(f"[pacman] {helper_name} konnte nicht ausgeführt werden: {exc}")
-                else:
-                    if proc.returncode == 0:
-                        self._log_install(f"[pacman] {helper_name} erfolgreich abgeschlossen.")
-                        still_missing = pkg_missing("pacman", missing, self._log_install)
-                        if not still_missing:
-                            return True
-                        self._log_install(f"[pacman] Pakete fehlen weiterhin nach {helper_name}: {' '.join(still_missing)}")
-                    else:
-                        self._log_install(f"[pacman] {helper_name} meldete Fehlercode {proc.returncode}.")
+                                    self._log_install(
+                                        f"[pacman] Entfernen von {targeted} fehlgeschlagen: {exc}"
+                                    )
+                            if removed_items:
+                                cleaned_any = True
+                                unique_removed = ", ".join(sorted(set(removed_items)))
+                                self._log_install(
+                                    f"[pacman] Cache {pkg_cache_dir} bereinigt – entfernte Dateien: {unique_removed}."
+                                )
+                        if not cleaned_any:
+                            self._log_install(
+                                f"[pacman] Keine Teil-Downloads im Cache von {helper_name} gefunden."
+                            )
+                        retry_cmd = base_cmd.copy()
+                        extras = ["--redownload"]
+                        if not supports_redownload_flag:
+                            # Hinweis, falls der Helper das Flag nicht dokumentiert – trotzdem versuchen.
+                            self._log_install(
+                                f"[pacman] Hinweis: {helper_name} dokumentiert kein --redownload, Flag wird dennoch gesetzt."
+                            )
+                        if supports_rebuild_flag:
+                            extras.append("--rebuild")
+                        for extra in reversed(extras):
+                            retry_cmd.insert(pkg_arg_index, extra)
+                        retry_desc = " ".join(extras)
+                        self._log_install(
+                            f"[pacman] Starte {helper_name} erneut mit zusätzlichen Flags ({retry_desc})."
+                        )
+                        retcode2, aur_stdout2, logged_preview2, suppressed_count2, run_exc2 = _run_helper_with_prompts(
+                            retry_cmd
+                        )
+                        if run_exc2 is None and retcode2 == 0:
+                            self._log_install(f"[pacman] {helper_name} im zweiten Versuch erfolgreich abgeschlossen.")
+                            still_missing = pkg_missing("pacman", missing, self._log_install)
+                            if not still_missing:
+                                return True
+                            self._log_install(
+                                f"[pacman] Pakete fehlen weiterhin nach {helper_name}: {' '.join(still_missing)}"
+                            )
+                        else:
+                            # Übernehme Ausgaben und Status des zweiten Versuchs für die nachfolgende Fehlerlogik.
+                            if run_exc2 is None:
+                                retcode = retcode2
+                                aur_stdout = aur_stdout2
+                                logged_preview = logged_preview2
+                                suppressed_count = suppressed_count2
+                            else:
+                                # Fehler wurde bereits geloggt – ursprünglichen Status beibehalten.
+                                pass
+                    if retcode is not None and retcode != 0:
+                        self._log_install(f"[pacman] {helper_name} meldete Fehlercode {retcode}.")
                         if not logged_preview:
                             out = (aur_stdout or "").strip().splitlines()
                             for line in out[:10]:
@@ -1516,7 +1615,7 @@ class AutoTrackerGUI(tk.Tk):
                                 f"[pacman] Starte {helper_name} erneut – Eingaben jetzt direkt im Terminal erforderlich."
                             )
                             try:
-                                retry_proc = subprocess.run(cmd, check=False, env=env)
+                                retry_proc = subprocess.run(base_cmd, check=False, env=env)
                             except Exception as exc:
                                 self._log_install(f"[pacman] Interaktiver {helper_name}-Aufruf fehlgeschlagen: {exc}")
                             else:
