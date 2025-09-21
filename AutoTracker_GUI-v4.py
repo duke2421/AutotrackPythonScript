@@ -1375,6 +1375,16 @@ class AutoTrackerGUI(tk.Tk):
             if collect_only:
                 self._pending_pacman_repo_packages = []
             return True
+        try:
+            still_missing = pkg_missing("pacman", to_check, self._log_install)
+        except Exception as exc:
+            self._log_install(f"[pacman] Lokale Paketprüfung für {' '.join(to_check)} fehlgeschlagen: {exc}")
+            still_missing = to_check
+        if not still_missing:
+            if collect_only:
+                self._pending_pacman_repo_packages = []
+            return True
+        to_check = still_missing
         missing = []
         for name in to_check:
             try:
