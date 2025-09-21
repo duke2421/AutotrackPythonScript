@@ -402,7 +402,7 @@ def _sudo_wrap(cmd):
 def ensure_tkinter():
     try:
         import importlib; importlib.import_module("tkinter"); return True
-    except ModuleNotFoundError:
+    except (ModuleNotFoundError, ImportError):  # also catch missing shared libs raising ImportError
         if OS_NAME != "Linux":
             sys.stderr.write("[Error] Tkinter missing and cannot be auto-installed on this OS.\n")
             return False
@@ -423,7 +423,7 @@ def ensure_tkinter():
             try:
                 import importlib; importlib.import_module("tkinter")
                 os.execv(sys.executable, [sys.executable] + sys.argv)
-            except ModuleNotFoundError:
+            except (ModuleNotFoundError, ImportError):  # handle libtk import failures as well
                 sys.stderr.write("Tkinter still cannot be imported.\n")
                 return False
         else:
