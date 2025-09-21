@@ -1336,6 +1336,30 @@ class AutoTrackerGUI(tk.Tk):
             extras = []
         return extras
 
+    def _ensure_pacman_repo_packages(self, pm, pkgs):
+        # Prüft, ob freeimage/metis im offiziellen Repo verfügbar sind, bevor pacman ausgeführt wird.
+        if pm != "pacman" or not pkgs:
+            return True
+        to_check = [name for name in ("freeimage", "metis") if name in pkgs]
+        if not to_check:
+            return True
+        missing = []
+        for name in to_check:
+            try:
+                res = subprocess.run(["pacman", "-Si", name], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            except Exception as exc:
+                self._log_install(f"[pacman] Repository-Prüfung für {name} fehlgeschlagen: {exc}")
+                missing.append(name)
+                continue
+            if res.returncode != 0:
+                missing.append(name)
+        if missing:
+            self._log_install(f"[pacman] Pakete nicht in aktivierten Repositories gefunden: {' '.join(missing)}")
+            self._log_install("[pacman] Bitte installiere die Pakete manuell aus dem AUR (z. B. `yay -S freeimage metis`) und starte den Installer erneut.")
+            self._log_install("Installer abgebrochen – pacman-Pakete fehlen.")
+            return False
+        return True
+
     def _win_copy_tool_bin(self, extracted_root: Path, exe_name: str, target_bin: Path, log_fn, progress_cb=None):
         try:
             exe_path = None
@@ -1428,7 +1452,7 @@ class AutoTrackerGUI(tk.Tk):
                     colmap_base = ["gcc-c++","cmake","git","libboost-devel","eigen3-devel","suitesparse-devel","ceres-solver-devel",
                                    "freeimage-devel","glog-devel","gflags-devel","libqt5-qtbase-devel","libqt5-qtopengl-devel","ninja"]
                 elif pm == "pacman":
-                    colmap_base = ["base-devel","cmake","git","boost","eigen","suitesparse","ceres-solver","freeimage","glog","gflags","qt5-base","ninja"]
+                    colmap_base = ["base-devel","cmake","git","boost","eigen","suitesparse","ceres-solver","freeimage","google-glog","gflags","qt5-base","ninja"]
                 elif pm == "apk":
                     colmap_base = ["build-base","cmake","git","boost-dev","eigen-dev","suitesparse-dev","ceres-dev",
                                    "freeimage-dev","glog-dev","gflags-dev","qt5-qtbase-dev","ninja"]
@@ -1448,7 +1472,7 @@ class AutoTrackerGUI(tk.Tk):
                     glomap_base = ["gcc-c++","cmake","git","libboost-devel","eigen3-devel","suitesparse-devel","ceres-solver-devel",
                                    "glog-devel","gflags-devel","ninja"]
                 elif pm == "pacman":
-                    glomap_base = ["base-devel","cmake","git","boost","eigen","suitesparse","ceres-solver","glog","gflags","ninja"]
+                    glomap_base = ["base-devel","cmake","git","boost","eigen","suitesparse","ceres-solver","google-glog","gflags","ninja"]
                 elif pm == "apk":
                     glomap_base = ["build-base","cmake","git","boost-dev","eigen-dev","suitesparse-dev","ceres-dev","glog-dev","gflags-dev","ninja"]
                 else:
@@ -1460,6 +1484,9 @@ class AutoTrackerGUI(tk.Tk):
 
             if all_pkgs:
                 self._log_install("Installiere Pakete gesammelt: " + " ".join(all_pkgs))
+                if not self._ensure_pacman_repo_packages(pm, all_pkgs):
+                    # Bei fehlenden Repo-Paketen (nur AUR) Installation abbrechen.
+                    return
                 pkg_install(pm, all_pkgs, self._log_install)
                 self._batched_pkg_install = True
             else:
@@ -1641,7 +1668,7 @@ class AutoTrackerGUI(tk.Tk):
                     pkgs.update(["gcc-c++","cmake","git","libboost-devel","eigen3-devel","suitesparse-devel","ceres-solver-devel",
                                  "freeimage-devel","glog-devel","gflags-devel","libqt5-qtbase-devel","libqt5-qtopengl-devel","ninja"])
                 elif pm == "pacman":
-                    pkgs.update(["base-devel","cmake","git","boost","eigen","suitesparse","ceres-solver","freeimage","glog","gflags","qt5-base","ninja"])
+                    pkgs.update(["base-devel","cmake","git","boost","eigen","suitesparse","ceres-solver","freeimage","google-glog","gflags","qt5-base","ninja"])
                 elif pm == "apk":
                     pkgs.update(["build-base","cmake","git","boost-dev","eigen-dev","suitesparse-dev","ceres-dev",
                                  "freeimage-dev","glog-dev","gflags-dev","qt5-qtbase-dev","ninja"])
@@ -1658,12 +1685,14 @@ class AutoTrackerGUI(tk.Tk):
                     pkgs.update(["gcc-c++","cmake","git","libboost-devel","eigen3-devel","suitesparse-devel","ceres-solver-devel",
                                  "glog-devel","gflags-devel","ninja"])
                 elif pm == "pacman":
-                    pkgs.update(["base-devel","cmake","git","boost","eigen","suitesparse","ceres-solver","glog","gflags","ninja"])
+                    pkgs.update(["base-devel","cmake","git","boost","eigen","suitesparse","ceres-solver","google-glog","gflags","ninja"])
                 elif pm == "apk":
                     pkgs.update(["build-base","cmake","git","boost-dev","eigen-dev","suitesparse-dev","ceres-dev","glog-dev","gflags-dev","ninja"])
                 pkgs.update(self._extras_for(pm, "glomap"))
             if pkgs and not getattr(self, "_batched_pkg_install", False):
                 self._log_install("Paketabhängigkeiten gesammelt – einmaliger Paketmanager-Lauf …")
+                if not self._ensure_pacman_repo_packages(pm, pkgs):
+                    return
                 pkg_install(pm, sorted(pkgs), self._log_install)
                 self._batched_pkg_install = True
             else:
@@ -1708,7 +1737,7 @@ class AutoTrackerGUI(tk.Tk):
                                  "freeimage-devel","glog-devel","gflags-devel","libqt5-qtbase-devel","libqt5-qtopengl-devel","ninja",
                                  "sqlite3-devel","flann-devel","glew-devel","pkgconf-pkg-config","cgal-devel","blas-devel","lapack-devel","metis-devel"])
                 elif pm == "pacman":
-                    pkgs.update(["base-devel","cmake","git","boost","eigen","suitesparse","ceres-solver","freeimage","glog","gflags","qt5-base","ninja",
+                    pkgs.update(["base-devel","cmake","git","boost","eigen","suitesparse","ceres-solver","freeimage","google-glog","gflags","qt5-base","ninja",
                                  "sqlite","flann","glew","pkgconf","cgal","blas","lapack","metis"])
                 elif pm == "apk":
                     pkgs.update(["build-base","cmake","git","boost-dev","eigen-dev","suitesparse-dev","ceres-dev",
@@ -1729,13 +1758,15 @@ class AutoTrackerGUI(tk.Tk):
                                  "glog-devel","gflags-devel","ninja",
                                  "sqlite3-devel","flann-devel","glew-devel","pkgconf-pkg-config","freeimage-devel"])
                 elif pm == "pacman":
-                    pkgs.update(["base-devel","cmake","git","boost","eigen","suitesparse","ceres-solver","glog","gflags","ninja",
+                    pkgs.update(["base-devel","cmake","git","boost","eigen","suitesparse","ceres-solver","google-glog","gflags","ninja",
                                  "sqlite","flann","glew","freeimage"])
                 elif pm == "apk":
                     pkgs.update(["build-base","cmake","git","boost-dev","eigen-dev","suitesparse-dev","ceres-dev","glog-dev","gflags-dev","ninja",
                                  "sqlite-dev","flann-dev","glew-dev","freeimage-dev"])
         if pkgs and not getattr(self, "_batched_pkg_install", False):
             self._log_install("Paketabhängigkeiten gesammelt – führe Paketmanager einmalig aus …")
+            if not self._ensure_pacman_repo_packages(pm, pkgs):
+                return
             pkg_install(pm, sorted(pkgs), self._log_install)
         # ===== Ende Batch-Install =====
         if getattr(self, "try_install_cuda_var", None) and self.try_install_cuda_var.get():
@@ -1744,12 +1775,19 @@ class AutoTrackerGUI(tk.Tk):
             elif pm == "dnf": cuda_pkgs = ["cuda", "cuda-toolkit"]
             elif pm == "zypper": cuda_pkgs = ["cuda"]
             elif pm == "pacman": cuda_pkgs = ["cuda"]
-            if cuda_pkgs: self._log_install(f"Versuche CUDA Toolkit zu installieren: {' '.join(cuda_pkgs)}"); pkg_install(pm, cuda_pkgs, self._log_install) if not getattr(self, "_batched_pkg_install", False) else 0
+            if cuda_pkgs:
+                self._log_install(f"Versuche CUDA Toolkit zu installieren: {' '.join(cuda_pkgs)}")
+                if not getattr(self, "_batched_pkg_install", False):
+                    if not self._ensure_pacman_repo_packages(pm, cuda_pkgs):
+                        return
+                    pkg_install(pm, cuda_pkgs, self._log_install)
 
         if getattr(self, "inst_ffmpeg", None) and self.inst_ffmpeg.get():
             self._log_install("ffmpeg Installation über Paketmanager…")
             code = 0
             if not getattr(self, "_batched_pkg_install", False):
+                if not self._ensure_pacman_repo_packages(pm, ["ffmpeg"]):
+                    return
                 code = pkg_install(pm, ["ffmpeg"], self._log_install)
             if code == 0:
                 path = which_first(["ffmpeg"]); self._log_install(f"ffmpeg installiert. Pfad: {path or 'nicht im PATH gefunden'}")
@@ -1768,13 +1806,16 @@ class AutoTrackerGUI(tk.Tk):
                 base = ["gcc-c++","cmake","git","libboost-devel","eigen3-devel","suitesparse-devel","ceres-solver-devel",
                         "freeimage-devel","glog-devel","gflags-devel","libqt5-qtbase-devel","libqt5-qtopengl-devel","ninja"]
             elif pm == "pacman":
-                base = ["base-devel","cmake","git","boost","eigen","suitesparse","ceres-solver","freeimage","glog","gflags","qt5-base","ninja"]
+                base = ["base-devel","cmake","git","boost","eigen","suitesparse","ceres-solver","freeimage","google-glog","gflags","qt5-base","ninja"]
             elif pm == "apk":
                 base = ["build-base","cmake","git","boost-dev","eigen-dev","suitesparse-dev","ceres-dev",
                         "freeimage-dev","glog-dev","gflags-dev","qt5-qtbase-dev","ninja"]
             else:
                 base = []
-            if base and not getattr(self, "_batched_pkg_install", False): pkg_install(pm, base, self._log_install)
+            if base and not getattr(self, "_batched_pkg_install", False):
+                if not self._ensure_pacman_repo_packages(pm, base):
+                    return
+                pkg_install(pm, base, self._log_install)
             colmap_url = self.colmap_url_var.get().strip() if hasattr(self, "colmap_url_var") else ""
             if not colmap_url:
                 self._log_install("COLMAP Quelle nicht gesetzt – überspringe Build.")
@@ -1829,12 +1870,15 @@ class AutoTrackerGUI(tk.Tk):
                 base = ["gcc-c++","cmake","git","libboost-devel","eigen3-devel","suitesparse-devel","ceres-solver-devel",
                         "glog-devel","gflags-devel","ninja"]
             elif pm == "pacman":
-                base = ["base-devel","cmake","git","boost","eigen","suitesparse","ceres-solver","glog","gflags","ninja"]
+                base = ["base-devel","cmake","git","boost","eigen","suitesparse","ceres-solver","google-glog","gflags","ninja"]
             elif pm == "apk":
                 base = ["build-base","cmake","git","boost-dev","eigen-dev","suitesparse-dev","ceres-dev","glog-dev","gflags-dev","ninja"]
             else:
                 base = []
-            if base and not getattr(self, "_batched_pkg_install", False): pkg_install(pm, base, self._log_install)
+            if base and not getattr(self, "_batched_pkg_install", False):
+                if not self._ensure_pacman_repo_packages(pm, base):
+                    return
+                pkg_install(pm, base, self._log_install)
             glomap_url = self.glomap_url_var.get().strip() if hasattr(self, "glomap_url_var") else ""
             if not glomap_url:
                 self._log_install("GLOMAP Quelle nicht gesetzt – überspringe Build.")
