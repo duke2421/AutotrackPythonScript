@@ -886,6 +886,46 @@ def _maybe_cuda_host_flag(pm, log_fn):
             return ["-DCUDA_ENABLED=OFF"]
     return ["-DCUDA_ENABLED=ON"]
 
+def _ensure_local_eigen34(top_dir: Path, log_fn):
+    """Download and prepare Eigen 3.4.0 for local CMake builds."""
+    try:
+        top_dir = Path(top_dir)
+        eigen_src_dir = top_dir / DEFAULT_DIRS["sources"] / "eigen-3.4.0"
+        eigen_url = "https://gitlab.com/libeigen/eigen/-/archive/3.4.0/eigen-3.4.0.tar.gz"
+        if log_fn:
+            log_fn("COLMAP: Keine passende Eigen3-Version gefunden – bereite lokale Eigen 3.4.0 Quelle vor…")
+        src = ensure_source_from_url(eigen_url, eigen_src_dir, log_fn)
+        if not src:
+            if log_fn:
+                log_fn("COLMAP: Eigen 3.4.0 konnte nicht vorbereitet werden (Download/Entpacken fehlgeschlagen).")
+            return (None, None)
+        src = Path(src)
+        cmake_dir = src / "cmake"
+        include_dir = src / "include" / "eigen3"
+        include_dir.mkdir(parents=True, exist_ok=True)
+        for name in ("Eigen", "unsupported"):
+            entry = src / name
+            if entry.exists():
+                target = include_dir / name
+                if entry.is_dir():
+                    shutil.copytree(entry, target, dirs_exist_ok=True)
+                else:
+                    shutil.copy2(entry, target)
+        signature = src / "signature_of_eigen3_matrix_library"
+        if signature.exists():
+            shutil.copy2(signature, include_dir / signature.name)
+        if not cmake_dir.exists():
+            if log_fn:
+                log_fn("COLMAP: Eigen 3.4.0 cmake-Verzeichnis fehlt – lokaler Fallback kann nicht verwendet werden.")
+            return (None, None)
+        if log_fn:
+            log_fn(f"COLMAP: Verwende mitgeliefertes Eigen 3.4.0 (cmake: {cmake_dir}, include: {include_dir}).")
+        return (cmake_dir, include_dir)
+    except Exception as exc:
+        if log_fn:
+            log_fn(f"COLMAP: Vorbereitung der lokalen Eigen 3.4.0 Quellen fehlgeschlagen: {exc}")
+        return (None, None)
+
 # ----------------------------- GUI helpers -----------------------------
 def find_in_subdir_with_bin(top: Path, subdir: str, names):
     base = top / subdir
@@ -2199,26 +2239,84 @@ class AutoTrackerGUI(tk.Tk):
                         bla_vendor = "OpenBLAS"
                     vendor_arg = f"-DBLA_VENDOR={bla_vendor}"
 
-                    def _detect_eigen3_dir_arg():
-                        # Hilft der Ceres/Eigen-Konfiguration besonders auf Arch (z. B. CachyOS),
-                        # greift aber auch auf Debian/Ubuntu, weil /usr/share/eigen3/cmake identisch ist.
+                    def _resolve_eigen34_paths():
                         if IS_WINDOWS:
-                            return None
-                        eigen_hint_dirs = [
-                            Path("/usr/share/eigen3/cmake"),
-                            Path("/usr/lib/cmake/eigen3"),
-                            Path("/usr/local/share/eigen3/cmake"),
-                            Path("/usr/local/lib/cmake/eigen3"),
+                            return (None, None)
+                        eigen_candidates = [
+                            (Path("/usr/share/eigen3/cmake"), [Path("/usr/include/eigen3")]),
+                            (Path("/usr/lib/cmake/eigen3"), [Path("/usr/include/eigen3")]),
+                            (Path("/usr/lib64/cmake/eigen3"), [Path("/usr/include/eigen3")]),
+                            (Path("/usr/local/share/eigen3/cmake"), [Path("/usr/local/include/eigen3"), Path("/usr/include/eigen3")]),
+                            (Path("/usr/local/lib/cmake/eigen3"), [Path("/usr/local/include/eigen3")]),
+                            (Path("/usr/local/lib64/cmake/eigen3"), [Path("/usr/local/include/eigen3")]),
+                            (Path("/opt/homebrew/share/eigen3/cmake"), [Path("/opt/homebrew/include/eigen3")]),
+                            (Path("/opt/homebrew/opt/eigen/share/eigen3/cmake"), [Path("/opt/homebrew/include/eigen3")]),
+                            (Path("/opt/local/share/eigen3/cmake"), [Path("/opt/local/include/eigen3")]),
+                            (Path("/opt/local/lib/cmake/eigen3"), [Path("/opt/local/include/eigen3")]),
                         ]
-                        for base in eigen_hint_dirs:
-                            if (base / "Eigen3Config.cmake").exists():
-                                return f"-DEigen3_DIR={base}"
-                        return None
 
-                    eigen_dir_arg = _detect_eigen3_dir_arg()
-                    base_args = [f"-DCMAKE_INSTALL_PREFIX={install_prefix}", vendor_arg]
-                    if eigen_dir_arg:
-                        base_args.append(eigen_dir_arg)
+                        def _cmake_version(dir_path: Path):
+                            cfg_version = dir_path / "Eigen3ConfigVersion.cmake"
+                            if not cfg_version.exists():
+                                return None
+                            try:
+                                text = cfg_version.read_text(encoding="utf-8", errors="ignore")
+                            except Exception:
+                                return None
+                            import re
+                            match = re.search(r"PACKAGE_VERSION\s+\"([^\"]+)\"", text)
+                            return match.group(1).strip() if match else None
+
+                        def _header_version(include_dir: Path):
+                            if not include_dir or not include_dir.exists():
+                                return None
+                            macros = include_dir / "Eigen" / "src" / "Core" / "util" / "Macros.h"
+                            if not macros.exists():
+                                return None
+                            try:
+                                text = macros.read_text(encoding="utf-8", errors="ignore")
+                            except Exception:
+                                return None
+                            import re
+                            world = re.search(r"#define\s+EIGEN_WORLD_VERSION\s+(\d+)", text)
+                            major = re.search(r"#define\s+EIGEN_MAJOR_VERSION\s+(\d+)", text)
+                            minor = re.search(r"#define\s+EIGEN_MINOR_VERSION\s+(\d+)", text)
+                            if world and major and minor:
+                                return f"{world.group(1)}.{major.group(1)}.{minor.group(1)}"
+                            return None
+
+                        checked_headers = set()
+                        for cmake_dir, include_dirs in eigen_candidates:
+                            if not cmake_dir.exists():
+                                continue
+                            version = _cmake_version(cmake_dir)
+                            if version:
+                                if version.startswith("3.4."):
+                                    return (cmake_dir, None)
+                                self._log_install(f"Eigen3 Version {version} unter {cmake_dir} ignoriert (benötigt 3.4.x).")
+                                continue
+                            guesses = list(include_dirs) + [cmake_dir.parent / "include" / "eigen3", cmake_dir.parent.parent / "include" / "eigen3"]
+                            for inc_dir in guesses:
+                                inc_dir = Path(inc_dir)
+                                if inc_dir in checked_headers:
+                                    continue
+                                checked_headers.add(inc_dir)
+                                version = _header_version(inc_dir)
+                                if not version:
+                                    continue
+                                if version.startswith("3.4."):
+                                    return (cmake_dir, None)
+                                self._log_install(f"Eigen3 Version {version} unter {inc_dir} ignoriert (benötigt 3.4.x).")
+                                break
+                        return _ensure_local_eigen34(top, self._log_install)
+
+                    eigen_cmake_dir, eigen_include_dir = _resolve_eigen34_paths()
+                    eigen_args = []
+                    if eigen_cmake_dir:
+                        eigen_args.append(f"-DEigen3_DIR={str(eigen_cmake_dir)}")
+                    if eigen_include_dir:
+                        eigen_args.append(f"-DEIGEN3_INCLUDE_DIR={str(eigen_include_dir)}")
+                    base_args = [f"-DCMAKE_INSTALL_PREFIX={install_prefix}", vendor_arg] + eigen_args
                     extra_args = base_args + cuda_args
                     code = cmake_configure_ninja(src_dir, build_dir, self._log_install, extra_args=extra_args)
                     if code != 0 and ("-DCUDA_ENABLED=ON" in cuda_args):
@@ -2229,8 +2327,7 @@ class AutoTrackerGUI(tk.Tk):
                         extra_args = [f"-DCMAKE_INSTALL_PREFIX={install_prefix}", "-DCUDA_ENABLED=OFF"]
                         if pm == "pacman":
                             extra_args.append(vendor_arg)
-                        if eigen_dir_arg:
-                            extra_args.append(eigen_dir_arg)
+                        extra_args.extend(eigen_args)
                         code = cmake_configure_ninja(src_dir, build_dir, self._log_install, extra_args=extra_args)
                     if code != 0:
                         if pm == "pacman":
@@ -2240,8 +2337,7 @@ class AutoTrackerGUI(tk.Tk):
                         extra_args = [f"-DCMAKE_INSTALL_PREFIX={install_prefix}"]
                         if pm == "pacman":
                             extra_args.append(vendor_arg)
-                        if eigen_dir_arg:
-                            extra_args.append(eigen_dir_arg)
+                        extra_args.extend(eigen_args)
                         code = cmake_configure_ninja(src_dir, build_dir, self._log_install, extra_args=extra_args)
                     if code == 0:
                         code = ninja_build(build_dir, self._log_install)
