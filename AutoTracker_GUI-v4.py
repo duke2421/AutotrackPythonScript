@@ -1364,10 +1364,16 @@ class AutoTrackerGUI(tk.Tk):
 
     def _ensure_pacman_repo_packages(self, pm, pkgs):
         # Prüft, ob freeimage/metis im offiziellen Repo verfügbar sind, bevor pacman ausgeführt wird.
+        collect_only = bool(getattr(self, "_pacman_collect_only", False))
+        # Merke fehlende Repo-Pakete für den Aufrufer, damit dieser sie gebündelt installieren kann.
+        if collect_only or not hasattr(self, "_pending_pacman_repo_packages"):
+            self._pending_pacman_repo_packages = []
         if pm != "pacman" or not pkgs:
             return True
         to_check = [name for name in ("freeimage", "metis") if name in pkgs]
         if not to_check:
+            if collect_only:
+                self._pending_pacman_repo_packages = []
             return True
         missing = []
         for name in to_check:
@@ -1381,13 +1387,27 @@ class AutoTrackerGUI(tk.Tk):
                 missing.append(name)
         if missing:
             self._log_install(f"[pacman] Pakete nicht in aktivierten Repositories gefunden: {' '.join(missing)}")
-            # Sorge dafür, dass grundlegende Build-Werkzeuge vor dem AUR-Helper verfügbar sind.
-            prereqs = [name for name in ("base-devel", "git") if name in pkgs]
-            if prereqs:
-                self._log_install(f"[pacman] Stelle Build-Voraussetzungen für AUR bereit: {' '.join(prereqs)}")
-                if pkg_install("pacman", prereqs, self._log_install) != 0:
-                    self._log_install("[pacman] Installation der Build-Voraussetzungen fehlgeschlagen – Installer abgebrochen.")
-                    return False
+            prereqs = ["base-devel", "git"]
+            try:
+                prereq_missing = pkg_missing("pacman", prereqs, self._log_install)
+            except Exception as exc:
+                self._log_install(f"[pacman] Prüfung der Build-Voraussetzungen fehlgeschlagen: {exc}")
+                prereq_missing = prereqs
+            if collect_only:
+                if prereq_missing:
+                    self._pending_pacman_repo_packages = _unique_preserve_order(prereq_missing)
+                    self._log_install(
+                        f"[pacman] Build-Voraussetzungen werden in den gemeinsamen Paketlauf aufgenommen: "
+                        f"{' '.join(self._pending_pacman_repo_packages)}"
+                    )
+                else:
+                    self._log_install("[pacman] Build-Voraussetzungen bereits installiert – kein Zusatzlauf nötig.")
+                return True
+            if prereq_missing:
+                self._log_install(
+                    "[pacman] Build-Voraussetzungen fehlen weiterhin nach der Paketinstallation – Installer abgebrochen."
+                )
+                return False
             aur_helper = which_first(["yay", "paru"])  # finde verfügbaren AUR-Helper für eine mögliche Automatisierung
             if aur_helper and self._ask_aur_helper_permission(aur_helper, missing):
                 helper_name = Path(aur_helper).name
@@ -1792,11 +1812,31 @@ class AutoTrackerGUI(tk.Tk):
             all_pkgs = _unique_preserve_order(all_pkgs)
 
             if all_pkgs:
-                self._log_install("Installiere Pakete gesammelt: " + " ".join(all_pkgs))
-                if not self._ensure_pacman_repo_packages(pm, all_pkgs):
-                    # Bei fehlenden Repo-Paketen (nur AUR) Installation abbrechen.
+                combined_pkgs = list(all_pkgs)
+                pending_repo = []
+                if pm == "pacman":
+                    # Sammelmodus: ermittelt fehlende Repo-Pakete (z. B. base-devel/git) für einen gemeinsamen Lauf.
+                    self._pacman_collect_only = True
+                    try:
+                        if not self._ensure_pacman_repo_packages(pm, combined_pkgs):
+                            return
+                        pending_repo = getattr(self, "_pending_pacman_repo_packages", [])
+                    finally:
+                        self._pacman_collect_only = False
+                    if pending_repo:
+                        combined_pkgs = _unique_preserve_order(combined_pkgs + pending_repo)
+                        self._pending_pacman_repo_packages = []
+                else:
+                    if not self._ensure_pacman_repo_packages(pm, combined_pkgs):
+                        return
+                self._log_install("Installiere Pakete gesammelt: " + " ".join(combined_pkgs))
+                code = pkg_install(pm, combined_pkgs, self._log_install)
+                if code != 0:
+                    self._log_install("[pkg] Paketinstallation fehlgeschlagen – Installer abgebrochen.")
                     return
-                pkg_install(pm, all_pkgs, self._log_install)
+                if pm == "pacman":
+                    if not self._ensure_pacman_repo_packages(pm, combined_pkgs):
+                        return
                 self._batched_pkg_install = True
             else:
                 self._log_install("Keine systemweiten Pakete erforderlich.")
