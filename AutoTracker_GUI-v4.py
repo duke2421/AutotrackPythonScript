@@ -775,6 +775,22 @@ def ensure_source_from_url(url: str, dest_dir: Path, log_fn) -> Path | None:
     else:
         return ensure_git_clone_or_refresh(url, dest_dir, "", log_fn) == 0 and dest_dir or None
 
+
+def _patch_glomap_poissonrecon_header(src_root: Path, log_fn):
+    try:
+        header = Path(src_root) / "thirdparty" / "PoissonRecon" / "Ply.h"
+        if not header.is_file():
+            return
+        text = header.read_text(encoding="utf-8")
+        count = text.count("point-p.value")
+        if not count:
+            return
+        new_text = text.replace("point-p.value", "point-p.point")
+        header.write_text(new_text, encoding="utf-8")
+        log_fn(f"[PATCH] PoissonRecon/Ply.h Operator-Korrektur angewendet ({count} Stellen).")
+    except Exception as e:
+        log_fn(f"[PATCH] Warnung: Patch PoissonRecon/Ply.h fehlgeschlagen: {e}")
+
 # ---- Git fallback ----
 def ensure_git_clone_or_refresh(url: str, dest: Path, branch: str, log_fn):
     dest = Path(dest)
@@ -2398,6 +2414,7 @@ class AutoTrackerGUI(tk.Tk):
                 if not src or not Path(src).exists():
                     self._log_install("Quellen konnten nicht vorbereitet werden – GLOMAP.")
                 else:
+                    _patch_glomap_poissonrecon_header(Path(src), self._log_install)
                     build_dir = src_dir / "build"
                     install_prefix = top / DEFAULT_DIRS["sfm"] / "glomap"
                     extra_args = [f"-DCMAKE_INSTALL_PREFIX={install_prefix}"]
