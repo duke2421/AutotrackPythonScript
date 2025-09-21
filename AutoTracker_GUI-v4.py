@@ -777,19 +777,68 @@ def ensure_source_from_url(url: str, dest_dir: Path, log_fn) -> Path | None:
 
 
 def _patch_glomap_poissonrecon_header(src_root: Path, log_fn):
+    """Patch all reachable PoissonRecon sources (header + SparseMatrix)."""
     try:
-        header = Path(src_root) / "thirdparty" / "PoissonRecon" / "Ply.h"
-        if not header.is_file():
+        src_root = Path(src_root)
+        if not src_root.exists():
             return
-        text = header.read_text(encoding="utf-8")
-        count = text.count("point-p.value")
-        if not count:
+        try:
+            candidates = [p for p in src_root.rglob("PoissonRecon") if p.is_dir()]
+        except Exception as e:
+            log_fn(f"[PATCH] Warnung: Suche nach PoissonRecon-Verzeichnissen fehlgeschlagen: {e}")
             return
-        new_text = text.replace("point-p.value", "point-p.point")
-        header.write_text(new_text, encoding="utf-8")
-        log_fn(f"[PATCH] PoissonRecon/Ply.h Operator-Korrektur angewendet ({count} Stellen).")
+        seen = set()
+        for pr_dir in sorted(candidates):
+            if pr_dir in seen:
+                continue
+            seen.add(pr_dir)
+            try:
+                import re
+
+                def _patch_ply(ply_path: Path):
+                    if not ply_path.is_file():
+                        return
+                    try:
+                        text = ply_path.read_text(encoding="utf-8")
+                    except Exception as exc:
+                        log_fn(f"[PATCH] Warnung: Lesen fehlgeschlagen ({ply_path}): {exc}")
+                        return
+                    pattern = re.compile(r"point(\s*)-(\s*)p\.value")
+                    new_text, count = pattern.subn(lambda m: f"point{m.group(1)}-{m.group(2)}p.point", text)
+                    if count:
+                        try:
+                            ply_path.write_text(new_text, encoding="utf-8")
+                        except Exception as exc:
+                            log_fn(f"[PATCH] Warnung: Schreiben fehlgeschlagen ({ply_path}): {exc}")
+                        else:
+                            log_fn(f"[PATCH] {ply_path}: point-p.value → point-p.point ({count} Stellen).")
+
+                def _patch_sparse_matrix(sparse_path: Path):
+                    if not sparse_path.is_file():
+                        return
+                    try:
+                        text = sparse_path.read_text(encoding="utf-8")
+                    except Exception as exc:
+                        log_fn(f"[PATCH] Warnung: Lesen fehlgeschlagen ({sparse_path}): {exc}")
+                        return
+                    needle = "Resize(this->m_N, this->m_M);"
+                    count = text.count(needle)
+                    if not count:
+                        return
+                    new_text = text.replace(needle, "Resize(this->rows, this->_maxEntriesPerRow);")
+                    try:
+                        sparse_path.write_text(new_text, encoding="utf-8")
+                    except Exception as exc:
+                        log_fn(f"[PATCH] Warnung: Schreiben fehlgeschlagen ({sparse_path}): {exc}")
+                    else:
+                        log_fn(f"[PATCH] {sparse_path}: Resize(this->m_N, this->m_M) → Resize(this->rows, this->_maxEntriesPerRow) ({count} Stellen).")
+
+                _patch_ply(pr_dir / "Ply.h")
+                _patch_sparse_matrix(pr_dir / "SparseMatrix.inl")
+            except Exception as e:
+                log_fn(f"[PATCH] Warnung: Patch in {pr_dir} fehlgeschlagen: {e}")
     except Exception as e:
-        log_fn(f"[PATCH] Warnung: Patch PoissonRecon/Ply.h fehlgeschlagen: {e}")
+        log_fn(f"[PATCH] Warnung: Patchlauf PoissonRecon fehlgeschlagen: {e}")
 
 # ---- Git fallback ----
 def ensure_git_clone_or_refresh(url: str, dest: Path, branch: str, log_fn):
@@ -2420,6 +2469,7 @@ class AutoTrackerGUI(tk.Tk):
                     extra_args = [f"-DCMAKE_INSTALL_PREFIX={install_prefix}"]
                     code = cmake_configure_ninja(src_dir, build_dir, self._log_install, extra_args=extra_args)
                     if code == 0:
+                        _patch_glomap_poissonrecon_header(build_dir, self._log_install)
                         code = ninja_build(build_dir, self._log_install)
                         if code == 0:
                             code = ninja_install(build_dir, self._log_install)
