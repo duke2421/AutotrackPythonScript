@@ -1358,7 +1358,7 @@ class AutoTrackerGUI(tk.Tk):
             aur_helper = which_first(["yay", "paru"])  # finde verfügbaren AUR-Helper für eine mögliche Automatisierung
             if aur_helper and self._ask_aur_helper_permission(aur_helper, missing):
                 helper_name = Path(aur_helper).name
-                cmd = [aur_helper, "-S", "--needed", *missing]
+                cmd = [aur_helper, "-S", "--needed", "--noconfirm", *missing]
                 self._log_install(f"[pacman] Starte {helper_name} für fehlende Pakete: {' '.join(missing)}")
                 try:
                     proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
