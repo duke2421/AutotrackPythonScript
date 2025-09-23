@@ -462,6 +462,8 @@ def _prepare_arch_askpass_env(env=None):
         return None
     target_env = os.environ if env is None else env
     target_env["SUDO_ASKPASS"] = str(askpass_path)
+    # Stelle sicher, dass sudo nicht auf eine Terminal-Abfrage zurückfällt, sondern bei Bedarf abbricht.
+    target_env.setdefault("SUDO_ASKPASS_REQUIRE", "force")
     for key in ("DISPLAY", "WAYLAND_DISPLAY", "XAUTHORITY", "DBUS_SESSION_BUS_ADDRESS"):
         val = os.environ.get(key)
         if val and key not in target_env:
