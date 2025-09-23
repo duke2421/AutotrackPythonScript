@@ -433,7 +433,15 @@ def _find_arch_terminal_command(script_path: Path):
             return [path, *args]
     return None
 
-def _run_pacman_in_terminal(pkgs, log_fn):
+def _detect_aur_helper():
+    """Return first available AUR helper (path, display name)."""
+    helper_path = which_first(["yay", "paru", "trizen", "pamac", "aura", "yaourt"])
+    if helper_path:
+        return helper_path, Path(helper_path).name
+    return None, None
+
+def _pacman_install_with_aur_helper(pkgs, log_fn):
+    """Run pacman in a dedicated terminal and fallback to an AUR helper."""
     if not pkgs:
         return 0
     display = os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY")
@@ -442,6 +450,11 @@ def _run_pacman_in_terminal(pkgs, log_fn):
         log_fn("[pacman] Keine grafische Sitzung gefunden – bitte folgenden Befehl manuell ausführen:")
         log_fn(f"[pacman]   {cmd_txt}")
         return 1
+    aur_helper, aur_name = _detect_aur_helper()
+    if aur_name:
+        log_fn(f"[pacman] AUR-Helfer erkannt: {aur_name}")
+    else:
+        log_fn("[pacman] Kein AUR-Helfer gefunden – Terminalskript zeigt Hinweise für fehlende Pakete.")
     try:
         tmp_dir = Path(tempfile.mkdtemp(prefix="autotracker-pacman-"))
     except Exception as exc:
@@ -450,30 +463,97 @@ def _run_pacman_in_terminal(pkgs, log_fn):
         return 1
     script_path = tmp_dir / "install.sh"
     status_path = tmp_dir / "status.txt"
+    missing_path = tmp_dir / "missing.txt"
     pkg_line = " ".join(pkgs)
+    aur_helper_line = shlex.quote(aur_helper) if aur_helper else "''"
+    aur_name_line = shlex.quote(aur_name) if aur_name else "''"
     script_lines = [
         "#!/bin/bash",
         "set -u",
         f"STATUS_FILE={shlex.quote(str(status_path))}",
-        f"echo '========================================'",
-        f"echo 'AutoTracker GUI – pacman Installation'",
-        f"echo '========================================'",
+        f"MISSING_FILE={shlex.quote(str(missing_path))}",
+        f"AUR_HELPER={aur_helper_line}",
+        f"AUR_HELPER_NAME={aur_name_line}",
+        "PKGS=(" + " ".join(shlex.quote(p) for p in pkgs) + ")",
+        "printf '' > \"$MISSING_FILE\"",
+        "echo '========================================'",
+        "echo 'AutoTracker GUI – pacman/AUR Installation'",
+        "echo '========================================'",
         "echo",
-        "echo 'Es werden folgende Pakete installiert:'",
+        "echo 'Es werden folgende Pakete geprüft:'",
         f"echo '  {pkg_line}'",
         "echo",
+        "echo 'Starte pacman …'",
         f"sudo pacman -Sy --needed --noconfirm {' '.join(shlex.quote(p) for p in pkgs)}",
-        "RC=$?",
-        "printf '%s\\n' \"$RC\" > \"$STATUS_FILE\"",
+        "PACMAN_RC=$?",
         "echo",
-        "if [ \"$RC\" -eq 0 ]; then",
-        "  echo 'Pacman-Lauf abgeschlossen.'",
+        "missing=()",
+        "for pkg in \"${PKGS[@]}\"; do",
+        "  if ! pacman -Qi \"$pkg\" >/dev/null 2>&1; then",
+        "    missing+=(\"$pkg\")",
+        "  fi",
+        "done",
+        "if [ ${#missing[@]} -gt 0 ]; then",
+        "  echo 'Pakete fehlen nach dem pacman-Lauf:'",
+        "  for pkg in \"${missing[@]}\"; do",
+        "    echo \"  - $pkg\"",
+        "  done",
         "else",
-        "  echo \"Pacman meldete Fehlercode $RC.\"",
+        "  echo 'Pacman hat alle Pakete installiert.'",
+        "fi",
+        "AUR_FAIL=0",
+        "if [ ${#missing[@]} -gt 0 ]; then",
+        "  if [ -n \"$AUR_HELPER\" ]; then",
+        "    echo",
+        "    if [ -n \"$AUR_HELPER_NAME\" ]; then",
+        "      echo \"Nutze AUR-Helfer $AUR_HELPER_NAME für fehlende Pakete …\"",
+        "    else",
+        "      echo 'Nutze AUR-Helfer für fehlende Pakete …'",
+        "    fi",
+        "    for pkg in \"${missing[@]}\"; do",
+        "      \"$AUR_HELPER\" -S --needed --noconfirm \"$pkg\"",
+        "      rc=$?",
+        "      if [ $rc -ne 0 ]; then",
+        "        echo \"AUR-Installation für $pkg fehlgeschlagen (Code $rc).\"",
+        "        AUR_FAIL=1",
+        "      fi",
+        "    done",
+        "    missing=()",
+        "    for pkg in \"${PKGS[@]}\"; do",
+        "      if ! pacman -Qi \"$pkg\" >/dev/null 2>&1; then",
+        "        missing+=(\"$pkg\")",
+        "      fi",
+        "    done",
+        "  else",
+        "    echo",
+        "    echo 'Kein AUR-Helfer gefunden. Bitte installiere folgende Pakete manuell:'",
+        "    for pkg in \"${missing[@]}\"; do",
+        "      echo \"  -> $pkg (z. B.: yay -S $pkg)\"",
+        "    done",
+        "    AUR_FAIL=1",
+        "  fi",
+        "fi",
+        "if [ ${#missing[@]} -eq 0 ] && [ $PACMAN_RC -eq 0 ] && [ $AUR_FAIL -eq 0 ]; then",
+        "  FINAL_RC=0",
+        "else",
+        "  FINAL_RC=1",
+        "fi",
+        "printf '' > \"$MISSING_FILE\"",
+        "if [ ${#missing[@]} -gt 0 ]; then",
+        "  for pkg in \"${missing[@]}\"; do",
+        "    printf '%s\\n' \"$pkg\" >> \"$MISSING_FILE\"",
+        "  done",
+        "fi",
+        "printf '%s\\n' \"$FINAL_RC\" > \"$STATUS_FILE\"",
+        "echo",
+        "if [ $FINAL_RC -eq 0 ]; then",
+        "  echo 'Installation abgeschlossen. Alle Pakete vorhanden.'",
+        "else",
+        "  echo 'Mindestens ein Paket konnte nicht installiert werden.'",
         "fi",
         "echo",
         "read -rp 'Fenster schließen mit ENTER … ' _",
-        "exit \"$RC\"",
+        "exit \"$FINAL_RC\"",
     ]
     try:
         script_path.write_text("\n".join(script_lines) + "\n", encoding="utf-8")
@@ -481,51 +561,78 @@ def _run_pacman_in_terminal(pkgs, log_fn):
     except Exception as exc:
         log_fn(f"[pacman] Installationsskript konnte nicht angelegt werden: {exc}")
         log_fn(f"[pacman] Bitte folgenden Befehl manuell ausführen:\n  {cmd_txt}")
+        try:
+            shutil.rmtree(tmp_dir, ignore_errors=True)
+        except Exception:
+            pass
         return 1
     term_cmd = _find_arch_terminal_command(script_path)
     if not term_cmd:
-        log_fn("[pacman] Kein Terminalprogramm gefunden. Führe den Befehl bitte manuell aus:")
+        log_fn("[pacman] Kein Terminalprogramm gefunden. Führe den pacman-Befehl manuell aus:")
         log_fn(f"[pacman]   {cmd_txt}")
+        try:
+            shutil.rmtree(tmp_dir, ignore_errors=True)
+        except Exception:
+            pass
         return 1
-    log_fn("[pacman] Öffne neues Terminal für die Paketinstallation …")
+    if aur_name:
+        log_fn(f"[pacman] Öffne Terminal für pacman mit AUR-Fallback über {aur_name} …")
+    else:
+        log_fn("[pacman] Öffne Terminal für pacman mit anschließendem AUR-Hinweis …")
     try:
         subprocess.Popen(term_cmd)
     except Exception as exc:
         log_fn(f"[pacman] Terminalstart fehlgeschlagen: {exc}")
         log_fn(f"[pacman] Bitte folgenden Befehl manuell ausführen:\n  {cmd_txt}")
+        try:
+            shutil.rmtree(tmp_dir, ignore_errors=True)
+        except Exception:
+            pass
         return 1
-    deadline = time.time() + 3600  # warte bis zu einer Stunde auf Abschluss
     status_code = None
-    while time.time() < deadline:
-        if status_path.exists():
+    missing_after = []
+    try:
+        deadline = time.time() + 3600
+        while time.time() < deadline:
+            if status_path.exists():
+                try:
+                    text = status_path.read_text(encoding="utf-8").strip()
+                    status_code = int(text)
+                except Exception:
+                    status_code = 1
+                break
+            time.sleep(1)
+        if status_code is None:
+            log_fn("[pacman] Konnte den Abschluss der pacman/AUR-Installation nicht erkennen.")
+            log_fn(f"[pacman] Prüfe das geöffnete Terminal oder führe den Befehl manuell aus:\n  {cmd_txt}")
+            return 1
+        if missing_path.exists():
             try:
-                text = status_path.read_text(encoding="utf-8").strip()
-                status_code = int(text)
-            except Exception:
-                status_code = 1
-            break
-        time.sleep(1)
-    if status_code is None:
-        log_fn("[pacman] Konnte den Abschluss der pacman-Installation nicht erkennen.")
-        log_fn(f"[pacman] Prüfe das geöffnete Terminal oder führe den Befehl manuell aus:\n  {cmd_txt}")
-        return 1
-    if status_code == 0:
-        log_fn("[pacman] Pacman-Lauf im Terminal erfolgreich beendet.")
-    else:
-        log_fn(f"[pacman] Pacman meldete Fehlercode {status_code}.")
-    try:
-        status_path.unlink()
-    except Exception:
-        pass
-    try:
-        script_path.unlink()
-    except Exception:
-        pass
-    try:
-        tmp_dir.rmdir()
-    except Exception:
-        pass
-    return status_code
+                text = missing_path.read_text(encoding="utf-8")
+                missing_after = [line.strip() for line in text.splitlines() if line.strip()]
+            except Exception as exc:
+                log_fn(f"[pacman] Hinweis: Liste fehlender Pakete konnte nicht gelesen werden: {exc}")
+        if status_code == 0:
+            log_fn("[pacman] Terminalskript meldet Erfolg.")
+        else:
+            log_fn(f"[pacman] Terminalskript meldet Fehlercode {status_code}.")
+        # Double-check from Python to log the final state after the terminal run.
+        remaining = pkg_missing("pacman", pkgs, lambda msg: None)
+        if missing_after and not remaining:
+            remaining = missing_after
+        if remaining:
+            log_fn(f"[pacman] Fehlende Pakete nach Terminallauf: {', '.join(remaining)}")
+            return 1
+        if status_code != 0:
+            log_fn("[pacman] Hinweis: Obwohl keine Pakete fehlen, meldete das Terminal einen Fehlercode.")
+            return status_code
+        log_fn("[pacman] Pacman-Lauf und AUR-Fallback abgeschlossen – alle Pakete vorhanden.")
+        return 0
+    finally:
+        try:
+            shutil.rmtree(tmp_dir, ignore_errors=True)
+        except Exception:
+            pass
 
 def _sudo_wrap(cmd):
     """Return escalated command list or None when no graphical polkit is available."""
@@ -749,7 +856,7 @@ def pkg_install(pm, pkgs, log_fn):
         cmd = f"zypper --non-interactive install -y {' '.join(pkgs)}"
     elif pm == "pacman":
         if _is_arch_like():
-            return _run_pacman_in_terminal(pkgs, log_fn)
+            return _pacman_install_with_aur_helper(pkgs, log_fn)
         cmd = f"pacman -Sy --noconfirm {' '.join(pkgs)}"
     elif pm == "apk":
         cmd = f"apk add --no-cache {' '.join(pkgs)}"
