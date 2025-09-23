@@ -394,7 +394,6 @@ def _tk_install_command(pm):
     return None
 
 _ARCH_IS_LIKE = None
-_ARCH_ASKPASS_SCRIPT = None
 
 def _is_arch_like():
     global _ARCH_IS_LIKE
@@ -412,63 +411,121 @@ def _is_arch_like():
     _ARCH_IS_LIKE = any(token in needles for token in tokens)
     return _ARCH_IS_LIKE
 
-def _ensure_arch_askpass_script():
-    global _ARCH_ASKPASS_SCRIPT
-    if _ARCH_ASKPASS_SCRIPT:
-        path = Path(_ARCH_ASKPASS_SCRIPT)
-        if path.exists():
-            return path
-    script_text = (
-        "#!/usr/bin/env python3\n"
-        "import sys\n"
-        "try:\n"
-        "    import tkinter as tk\n"
-        "    from tkinter import simpledialog\n"
-        "except Exception:\n"
-        "    sys.stderr.write('tkinter askpass helper failed\\n')\n"
-        "    sys.exit(1)\n"
-        "root = tk.Tk()\n"
-        "root.withdraw()\n"
-        "prompt = sys.argv[1] if len(sys.argv) > 1 else 'sudo password:'\n"
-        "answer = simpledialog.askstring('Administrator-Berechtigung', prompt, show='*')\n"
-        "if answer is None:\n"
-        "    root.destroy()\n"
-        "    sys.exit(1)\n"
-        "root.destroy()\n"
-        "sys.stdout.write(answer + '\\n')\n"
-        "sys.stdout.flush()\n"
-    )
-    try:
-        tmp_dir = Path(tempfile.gettempdir())
-        tmp_dir.mkdir(parents=True, exist_ok=True)
-        askpass_path = tmp_dir / "autotracker_sudo_askpass.py"
-        askpass_path.write_text(script_text, encoding="utf-8")
-        try:
-            askpass_path.chmod(0o700)
-        except Exception:
-            pass
-        _ARCH_ASKPASS_SCRIPT = str(askpass_path)
-        return askpass_path
-    except Exception:
-        return None
+def _find_arch_terminal_command(script_path: Path):
+    command = f"exec {shlex.quote(str(script_path))}"
+    terminal_specs = [
+        ("x-terminal-emulator", ["-e", "bash", "-lc", command]),
+        ("gnome-terminal", ["--wait", "--", "bash", "-lc", command]),
+        ("konsole", ["-e", "bash", "-lc", command]),
+        ("xfce4-terminal", ["-e", "bash", "-lc", command]),
+        ("mate-terminal", ["--wait", "--", "bash", "-lc", command]),
+        ("tilix", ["-e", "bash", "-lc", command]),
+        ("kitty", ["bash", "-lc", command]),
+        ("alacritty", ["-e", "bash", "-lc", command]),
+        ("terminator", ["-x", "bash", "-lc", command]),
+        ("lxterminal", ["-e", "bash", "-lc", command]),
+        ("urxvt", ["-e", "bash", "-lc", command]),
+        ("xterm", ["-e", "bash", "-lc", command]),
+    ]
+    for binary, args in terminal_specs:
+        path = shutil.which(binary)
+        if path:
+            return [path, *args]
+    return None
 
-def _prepare_arch_askpass_env(env=None):
-    if not _is_arch_like():
-        return None
-    if not (os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY")):
-        return None
-    askpass_path = _ensure_arch_askpass_script()
-    if not askpass_path:
-        return None
-    target_env = os.environ if env is None else env
-    target_env["SUDO_ASKPASS"] = str(askpass_path)
-    # Stelle sicher, dass sudo nicht auf eine Terminal-Abfrage zurückfällt, sondern bei Bedarf abbricht.
-    target_env.setdefault("SUDO_ASKPASS_REQUIRE", "force")
-    for key in ("DISPLAY", "WAYLAND_DISPLAY", "XAUTHORITY", "DBUS_SESSION_BUS_ADDRESS"):
-        val = os.environ.get(key)
-        if val and key not in target_env:
-            target_env[key] = val
-    return str(askpass_path)
+def _run_pacman_in_terminal(pkgs, log_fn):
+    if not pkgs:
+        return 0
+    display = os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY")
+    cmd_txt = f"sudo pacman -Sy --needed --noconfirm {' '.join(shlex.quote(p) for p in pkgs)}"
+    if not display:
+        log_fn("[pacman] Keine grafische Sitzung gefunden – bitte folgenden Befehl manuell ausführen:")
+        log_fn(f"[pacman]   {cmd_txt}")
+        return 1
+    try:
+        tmp_dir = Path(tempfile.mkdtemp(prefix="autotracker-pacman-"))
+    except Exception as exc:
+        log_fn(f"[pacman] Temporäres Verzeichnis konnte nicht erstellt werden: {exc}")
+        log_fn(f"[pacman] Bitte folgenden Befehl manuell ausführen:\n  {cmd_txt}")
+        return 1
+    script_path = tmp_dir / "install.sh"
+    status_path = tmp_dir / "status.txt"
+    pkg_line = " ".join(pkgs)
+    script_lines = [
+        "#!/bin/bash",
+        "set -u",
+        f"STATUS_FILE={shlex.quote(str(status_path))}",
+        f"echo '========================================'",
+        f"echo 'AutoTracker GUI – pacman Installation'",
+        f"echo '========================================'",
+        "echo",
+        "echo 'Es werden folgende Pakete installiert:'",
+        f"echo '  {pkg_line}'",
+        "echo",
+        f"sudo pacman -Sy --needed --noconfirm {' '.join(shlex.quote(p) for p in pkgs)}",
+        "RC=$?",
+        "printf '%s\\n' \"$RC\" > \"$STATUS_FILE\"",
+        "echo",
+        "if [ \"$RC\" -eq 0 ]; then",
+        "  echo 'Pacman-Lauf abgeschlossen.'",
+        "else",
+        "  echo \"Pacman meldete Fehlercode $RC.\"",
+        "fi",
+        "echo",
+        "read -rp 'Fenster schließen mit ENTER … ' _",
+        "exit \"$RC\"",
+    ]
+    try:
+        script_path.write_text("\n".join(script_lines) + "\n", encoding="utf-8")
+        script_path.chmod(0o700)
+    except Exception as exc:
+        log_fn(f"[pacman] Installationsskript konnte nicht angelegt werden: {exc}")
+        log_fn(f"[pacman] Bitte folgenden Befehl manuell ausführen:\n  {cmd_txt}")
+        return 1
+    term_cmd = _find_arch_terminal_command(script_path)
+    if not term_cmd:
+        log_fn("[pacman] Kein Terminalprogramm gefunden. Führe den Befehl bitte manuell aus:")
+        log_fn(f"[pacman]   {cmd_txt}")
+        return 1
+    log_fn("[pacman] Öffne neues Terminal für die Paketinstallation …")
+    try:
+        subprocess.Popen(term_cmd)
+    except Exception as exc:
+        log_fn(f"[pacman] Terminalstart fehlgeschlagen: {exc}")
+        log_fn(f"[pacman] Bitte folgenden Befehl manuell ausführen:\n  {cmd_txt}")
+        return 1
+    deadline = time.time() + 3600  # warte bis zu einer Stunde auf Abschluss
+    status_code = None
+    while time.time() < deadline:
+        if status_path.exists():
+            try:
+                text = status_path.read_text(encoding="utf-8").strip()
+                status_code = int(text)
+            except Exception:
+                status_code = 1
+            break
+        time.sleep(1)
+    if status_code is None:
+        log_fn("[pacman] Konnte den Abschluss der pacman-Installation nicht erkennen.")
+        log_fn(f"[pacman] Prüfe das geöffnete Terminal oder führe den Befehl manuell aus:\n  {cmd_txt}")
+        return 1
+    if status_code == 0:
+        log_fn("[pacman] Pacman-Lauf im Terminal erfolgreich beendet.")
+    else:
+        log_fn(f"[pacman] Pacman meldete Fehlercode {status_code}.")
+    try:
+        status_path.unlink()
+    except Exception:
+        pass
+    try:
+        script_path.unlink()
+    except Exception:
+        pass
+    try:
+        tmp_dir.rmdir()
+    except Exception:
+        pass
+    return status_code
 
 def _sudo_wrap(cmd):
     """Return escalated command list or None when no graphical polkit is available."""
@@ -484,8 +541,8 @@ def _sudo_wrap(cmd):
                 if val:
                     env_args.append(f"{key}={val}")
             return [pkexec, *env_args, "bash", "-lc", cmd]
-        if shutil.which("sudo") and _prepare_arch_askpass_env():
-            return ["sudo", "-A", "bash", "-lc", cmd]
+        if shutil.which("sudo"):
+            return ["sudo", "bash", "-lc", cmd]
         return None  # no graphical helper detected -> caller must instruct manual install
     if shutil.which("sudo"):
         return ["sudo", "bash", "-lc", cmd]
@@ -691,6 +748,8 @@ def pkg_install(pm, pkgs, log_fn):
     elif pm == "zypper":
         cmd = f"zypper --non-interactive install -y {' '.join(pkgs)}"
     elif pm == "pacman":
+        if _is_arch_like():
+            return _run_pacman_in_terminal(pkgs, log_fn)
         cmd = f"pacman -Sy --noconfirm {' '.join(pkgs)}"
     elif pm == "apk":
         cmd = f"apk add --no-cache {' '.join(pkgs)}"
@@ -1559,407 +1618,6 @@ class AutoTrackerGUI(tk.Tk):
             extras = []
         return extras
 
-    def _ensure_pacman_repo_packages(self, pm, pkgs):
-        # Prüft, ob freeimage/metis im offiziellen Repo verfügbar sind, bevor pacman ausgeführt wird.
-        collect_only = bool(getattr(self, "_pacman_collect_only", False))
-        # Merke fehlende Repo-Pakete für den Aufrufer, damit dieser sie gebündelt installieren kann.
-        if collect_only or not hasattr(self, "_pending_pacman_repo_packages"):
-            self._pending_pacman_repo_packages = []
-        if pm != "pacman" or not pkgs:
-            return True
-        try:
-            overall_missing = pkg_missing("pacman", pkgs, self._log_install)
-        except Exception as exc:
-            self._log_install(
-                f"[pacman] Lokale Paketprüfung für {' '.join(pkgs)} fehlgeschlagen: {exc}"
-            )
-            overall_missing = list(pkgs)
-        if not overall_missing:
-            if collect_only:
-                self._pending_pacman_repo_packages = []
-            return True
-        aur_candidates = [name for name in ("freeimage", "metis") if name in overall_missing]
-        if not aur_candidates:
-            if collect_only:
-                self._pending_pacman_repo_packages = []
-            return True
-        missing_repo = []
-        for name in aur_candidates:
-            try:
-                res = subprocess.run(["pacman", "-Si", name], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            except Exception as exc:
-                self._log_install(f"[pacman] Repository-Prüfung für {name} fehlgeschlagen: {exc}")
-                missing_repo.append(name)
-                continue
-            if res.returncode != 0:
-                missing_repo.append(name)
-        if not missing_repo:
-            if collect_only:
-                self._pending_pacman_repo_packages = []
-            return True
-        self._log_install(f"[pacman] Pakete nicht in aktivierten Repositories gefunden: {' '.join(missing_repo)}")
-        prereqs = ["base-devel", "git"]
-        try:
-            prereq_missing = pkg_missing("pacman", prereqs, self._log_install)
-        except Exception as exc:
-            self._log_install(f"[pacman] Prüfung der Build-Voraussetzungen fehlgeschlagen: {exc}")
-            prereq_missing = prereqs
-        if collect_only:
-            if prereq_missing:
-                self._pending_pacman_repo_packages = _unique_preserve_order(prereq_missing)
-                self._log_install(
-                    f"[pacman] Build-Voraussetzungen werden in den gemeinsamen Paketlauf aufgenommen: "
-                    f"{' '.join(self._pending_pacman_repo_packages)}"
-                )
-            else:
-                self._log_install("[pacman] Build-Voraussetzungen bereits installiert – kein Zusatzlauf nötig.")
-            return True
-        helper_targets = _unique_preserve_order(prereq_missing + overall_missing)
-        aur_helper = which_first(["yay", "paru"])  # finde verfügbaren AUR-Helper für eine mögliche Automatisierung
-        if aur_helper and self._ask_aur_helper_permission(aur_helper, helper_targets):
-            helper_name = Path(aur_helper).name
-            helper_lower = helper_name.lower()
-            if prereq_missing:
-                self._log_install(
-                    f"[pacman] Build-Voraussetzungen fehlen – {helper_name} installiert sie im selben Lauf."
-                )
-            cmd = [aur_helper, "-S", "--needed", "--noconfirm", "--skipreview"]
-            # Unterdrücke Review-/Diff-Abfragen und halte sudo aktiv, falls der Helper dies unterstützt.
-            supports_sudoloop = False
-            try:
-                help_probe = subprocess.run(
-                    [aur_helper, "--help"],
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
-                    text=True,
-                )
-            except Exception:
-                help_text = ""
-            else:
-                help_text = f"{help_probe.stdout or ''}{help_probe.stderr or ''}"
-                supports_sudoloop = "--sudoloop" in help_text
-            if supports_sudoloop:
-                cmd.append("--sudoloop")
-            env = os.environ.copy()
-            askpass_used = None
-            if helper_lower == "paru":
-                askpass_used = _prepare_arch_askpass_env(env)
-                if askpass_used:
-                    # Paru benötigt explizite sudo-Flags, damit sudo unser Tk-Askpass-Skript nutzt.
-                    cmd.append("--sudoflags=--askpass")
-            cmd.extend(helper_targets)
-            self._log_install(
-                f"[pacman] Starte {helper_name} für fehlende Pakete: {' '.join(helper_targets)}"
-            )
-            # Automatisiere Standardantworten auf yay/paru-Rückfragen (Providerwahl, Review, PKGBUILD-Bearbeitung).
-            prompt_markers = (
-                ("edit pkgbuild", "n\n"),
-                ("diff view", "\n"),
-                ("pkgbuild", "\n"),
-                ("[y/n]", "\n"),
-                ("geben sie eine zahl ein", "1\n"),
-                ("enter a number", "1\n"),
-                ("choose a provider", "1\n"),
-                ("please choose a provider", "1\n"),
-                ("select a provider", "1\n"),
-                ("enter the number", "1\n"),
-                ("choose a number", "1\n"),
-                ("select a number", "1\n"),
-            )
-            # Kopie der Umgebung erlaubt es, Polkit-Variablen nur für yay/paru zu setzen.
-            pkexec_available = shutil.which("pkexec") and (
-                os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY")
-            )
-            if pkexec_available:
-                # Sobald eine grafische Session läuft, sollen yay selbst pkexec nutzen.
-                if helper_lower == "yay":
-                    env["YAY_SUDO"] = "pkexec"
-            else:
-                if askpass_used is None:
-                    askpass_used = _prepare_arch_askpass_env(env)
-                if askpass_used and shutil.which("sudo"):
-                    if helper_lower == "paru" and "PARU_SUDO" not in env:
-                        env["PARU_SUDO"] = "sudo --askpass"
-                    elif helper_lower == "yay" and "YAY_SUDO" not in env:
-                        env["YAY_SUDO"] = "sudo --askpass"
-
-            base_cmd = cmd.copy()
-            pkg_arg_index = len(base_cmd) - len(helper_targets)
-            supports_rebuild_flag = "--rebuild" in help_text
-            supports_redownload_flag = "--redownload" in help_text
-
-            def _run_helper_with_prompts(cmd_args):
-                """Führt den AUR-Helper mit Prompt-Antworten aus und liefert Ausgaben zurück."""
-                aur_stdout_lines = []
-                preview_lines = []
-                suppressed_count = 0
-                logged_preview = False
-                try:
-                    proc_local = subprocess.Popen(
-                        cmd_args,
-                        stdin=subprocess.PIPE,
-                        stdout=subprocess.PIPE,
-                        stderr=subprocess.STDOUT,
-                        text=True,
-                        env=env,
-                    )
-                    while True:
-                        line = proc_local.stdout.readline() if proc_local.stdout else ""
-                        if line == "":
-                            if proc_local.poll() is not None:
-                                break
-                            time.sleep(0.1)
-                            continue
-                        aur_stdout_lines.append(line)
-                        stripped = line.rstrip("\n")
-                        if len(preview_lines) < 10:
-                            preview_lines.append(stripped)
-                            self._log_install(f"[{helper_name}] {stripped}")
-                            logged_preview = True
-                        else:
-                            suppressed_count += 1
-                        lowered = stripped.casefold()
-                        for marker, response in prompt_markers:
-                            if marker in lowered:
-                                try:
-                                    if proc_local.stdin:
-                                        proc_local.stdin.write(response)
-                                        proc_local.stdin.flush()
-                                except Exception as exc:
-                                    self._log_install(f"[pacman] Antwort auf {helper_name}-Prompt fehlgeschlagen: {exc}")
-                                break
-                    proc_local.wait()
-                    return (
-                        proc_local.returncode,
-                        "".join(aur_stdout_lines),
-                        logged_preview,
-                        suppressed_count,
-                        None,
-                    )
-                except Exception as exc:
-                    self._log_install(f"[pacman] {helper_name} konnte nicht ausgeführt werden: {exc}")
-                    return (None, "", False, 0, exc)
-
-            retcode, aur_stdout, logged_preview, suppressed_count, run_exc = _run_helper_with_prompts(base_cmd)
-            verify_targets = [pkg for pkg in helper_targets if pkg != "base-devel"]
-            if run_exc is None and retcode == 0:
-                self._log_install(f"[pacman] {helper_name} erfolgreich abgeschlossen.")
-                try:
-                    still_missing = (
-                        pkg_missing("pacman", verify_targets, self._log_install) if verify_targets else []
-                    )
-                except Exception as exc:
-                    self._log_install(f"[pacman] Nachprüfung der Paketinstallation fehlgeschlagen: {exc}")
-                    still_missing = verify_targets
-                if not still_missing:
-                    self._skip_pkg_install = True
-                    self._pacman_helper_used = helper_name
-                    return True
-                self._log_install(
-                    f"[pacman] Pakete fehlen weiterhin nach {helper_name}: {' '.join(still_missing)}"
-                )
-            elif run_exc is None and retcode is not None:
-                # Prüfe auf SourceForge-Resume-Fehler, damit ein automatischer Neuversuch gestartet werden kann.
-                lower_stdout = aur_stdout.casefold()
-                sf_resume_error = any(marker in lower_stdout for marker in ("curl: (33", "cannot resume"))
-                if sf_resume_error:
-                    self._log_install(
-                        f"[pacman] {helper_name} meldete mögliche SourceForge-Resume-Probleme – bereinige Cache und versuche es erneut."
-                    )
-                    cache_home = Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache"))
-                    helper_cache_root = cache_home / helper_name.lower() / "clone"
-                    cleaned_any = False
-                    patterns = ["*.part", "*.PART", "*.aria2", "*.crdownload"]
-                    for pkg_name in missing_repo:
-                        pkg_cache_dir = helper_cache_root / pkg_name
-                        if not pkg_cache_dir.exists():
-                            continue
-                        removed_items = []
-                        for pattern in patterns:
-                            for leftover in pkg_cache_dir.rglob(pattern):
-                                try:
-                                    if leftover.is_dir():
-                                        shutil.rmtree(leftover, ignore_errors=True)
-                                    else:
-                                        leftover.unlink()
-                                    removed_items.append(leftover.name)
-                                except Exception as exc:
-                                    self._log_install(
-                                        f"[pacman] Bereinigung von {leftover} fehlgeschlagen: {exc}"
-                                    )
-                        targeted = pkg_cache_dir / "FreeImage3180.zip"
-                        if targeted.exists():
-                            try:
-                                targeted.unlink()
-                                removed_items.append(targeted.name)
-                            except Exception as exc:
-                                self._log_install(
-                                    f"[pacman] Entfernen von {targeted} fehlgeschlagen: {exc}"
-                                )
-                        if removed_items:
-                            cleaned_any = True
-                            unique_removed = ", ".join(sorted(set(removed_items)))
-                            self._log_install(
-                                f"[pacman] Cache {pkg_cache_dir} bereinigt – entfernte Dateien: {unique_removed}."
-                            )
-                    if not cleaned_any:
-                        self._log_install(
-                            f"[pacman] Keine Teil-Downloads im Cache von {helper_name} gefunden."
-                        )
-                    retry_cmd = base_cmd.copy()
-                    extras = ["--redownload"]
-                    if not supports_redownload_flag:
-                        # Hinweis, falls der Helper das Flag nicht dokumentiert – trotzdem versuchen.
-                        self._log_install(
-                            f"[pacman] Hinweis: {helper_name} dokumentiert kein --redownload, Flag wird dennoch gesetzt."
-                        )
-                    if supports_rebuild_flag:
-                        extras.append("--rebuild")
-                    for extra in reversed(extras):
-                        retry_cmd.insert(pkg_arg_index, extra)
-                    retry_desc = " ".join(extras)
-                    self._log_install(
-                        f"[pacman] Starte {helper_name} erneut mit zusätzlichen Flags ({retry_desc})."
-                    )
-                    retcode2, aur_stdout2, logged_preview2, suppressed_count2, run_exc2 = _run_helper_with_prompts(
-                        retry_cmd
-                    )
-                    if run_exc2 is None and retcode2 == 0:
-                        self._log_install(f"[pacman] {helper_name} im zweiten Versuch erfolgreich abgeschlossen.")
-                        try:
-                            still_missing = (
-                                pkg_missing("pacman", verify_targets, self._log_install) if verify_targets else []
-                            )
-                        except Exception as exc:
-                            self._log_install(
-                                f"[pacman] Nachprüfung der Paketinstallation fehlgeschlagen: {exc}"
-                            )
-                            still_missing = verify_targets
-                        if not still_missing:
-                            self._skip_pkg_install = True
-                            self._pacman_helper_used = helper_name
-                            return True
-                        self._log_install(
-                            f"[pacman] Pakete fehlen weiterhin nach {helper_name}: {' '.join(still_missing)}"
-                        )
-                    else:
-                        # Übernehme Ausgaben und Status des zweiten Versuchs für die nachfolgende Fehlerlogik.
-                        if run_exc2 is None:
-                            retcode = retcode2
-                            aur_stdout = aur_stdout2
-                            logged_preview = logged_preview2
-                            suppressed_count = suppressed_count2
-                        else:
-                            # Fehler wurde bereits geloggt – ursprünglichen Status beibehalten.
-                            pass
-                if retcode is not None and retcode != 0:
-                    self._log_install(f"[pacman] {helper_name} meldete Fehlercode {retcode}.")
-                    if not logged_preview:
-                        out = (aur_stdout or "").strip().splitlines()
-                        for line in out[:10]:
-                            self._log_install(f"[{helper_name}] {line}")
-                        if len(out) > 10:
-                            self._log_install(f"[{helper_name}] … {len(out) - 10} weitere Zeilen unterdrückt …")
-                    elif suppressed_count > 0:
-                        self._log_install(f"[{helper_name}] … {suppressed_count} weitere Zeilen unterdrückt …")
-                    retry_decision = {"ok": False}
-                    retry_evt = threading.Event()
-
-                    def _ask_retry():
-                        try:
-                            msg = (f"{helper_name} konnte die Pakete nicht automatisch installieren.\n"
-                                   "Soll ein zweiter Versuch direkt im Terminal gestartet werden?")
-                            retry_decision["ok"] = messagebox.askyesno("AUR-Installation", msg)
-                        except Exception as exc:
-                            self._log_install(f"[pacman] Rückfrage für Terminal-Wiederholung fehlgeschlagen: {exc}")
-                        finally:
-                            retry_evt.set()
-
-                    try:
-                        self.after(0, _ask_retry)
-                        retry_evt.wait()
-                    except Exception as exc:
-                        self._log_install(f"[pacman] Rückfrage konnte nicht angezeigt werden: {exc}")
-                    if retry_decision["ok"]:
-                        self._log_install(
-                            f"[pacman] Starte {helper_name} erneut – Eingaben jetzt direkt im Terminal erforderlich."
-                        )
-                        try:
-                            retry_proc = subprocess.run(base_cmd, check=False, env=env)
-                        except Exception as exc:
-                            self._log_install(f"[pacman] Interaktiver {helper_name}-Aufruf fehlgeschlagen: {exc}")
-                        else:
-                            if retry_proc.returncode == 0:
-                                self._log_install(f"[pacman] {helper_name} im Terminal erfolgreich abgeschlossen.")
-                            else:
-                                self._log_install(
-                                    f"[pacman] {helper_name} beendete sich im Terminal mit Fehlercode {retry_proc.returncode}."
-                                )
-                            # Nach dem manuellen Versuch erneut prüfen, ob weiterhin Pakete fehlen.
-                            try:
-                                still_missing = (
-                                    pkg_missing("pacman", verify_targets, self._log_install)
-                                    if verify_targets
-                                    else []
-                                )
-                            except Exception as exc:
-                                self._log_install(
-                                    f"[pacman] Nachprüfung der Paketinstallation fehlgeschlagen: {exc}"
-                                )
-                                still_missing = verify_targets
-                            if not still_missing:
-                                self._skip_pkg_install = True
-                                self._pacman_helper_used = helper_name
-                                return True
-                            self._log_install(
-                                f"[pacman] Pakete fehlen weiterhin nach dem Terminal-Lauf von {helper_name}: {' '.join(still_missing)}"
-                            )
-            else:
-                # Fehler beim Starten des Helpers bereits geloggt.
-                pass
-            aur_hint = "freeimage metis" if not missing_repo else " ".join(missing_repo)
-            self._log_install(
-                f"[pacman] Bitte installiere die Pakete manuell aus dem AUR (z. B. `yay -S {aur_hint}`) und starte den Installer erneut."
-            )
-            self._log_install("Installer abgebrochen – pacman-Pakete fehlen.")
-            return False
-        if not aur_helper:
-            self._log_install("[pacman] Kein unterstützter AUR-Helper (yay/paru) gefunden.")
-        else:
-            self._log_install("[pacman] Automatische AUR-Installation wurde abgelehnt.")
-        aur_hint = "freeimage metis" if not missing_repo else " ".join(missing_repo)
-        self._log_install(
-            f"[pacman] Bitte installiere die Pakete manuell aus dem AUR (z. B. `yay -S {aur_hint}`) und starte den Installer erneut."
-        )
-        self._log_install("Installer abgebrochen – pacman-Pakete fehlen.")
-        return False
-        
-
-    def _ask_aur_helper_permission(self, helper_path, pkgs):
-        # Fragt threadsicher im UI-Thread nach, ob der gefundene AUR-Helper genutzt werden darf.
-        decision = {"ok": False}
-        evt = threading.Event()
-
-        def _prompt():
-            try:
-                helper_name = Path(helper_path).name
-                pkg_list = " ".join(pkgs)
-                msg = (f"{helper_name} wurde gefunden. "
-                       f"Darf der Installer jetzt `{helper_name} -S --needed {pkg_list}` ausführen?")
-                decision["ok"] = messagebox.askyesno("AUR-Installation", msg)
-            except Exception as exc:
-                self._log_install(f"[pacman] Rückfrage zur AUR-Installation fehlgeschlagen: {exc}")
-            finally:
-                evt.set()
-
-        try:
-            self.after(0, _prompt)
-            evt.wait()
-        except Exception as exc:
-            self._log_install(f"[pacman] Rückfrage konnte nicht angezeigt werden: {exc}")
-            return False
-        return decision["ok"]
-
     def _win_copy_tool_bin(self, extracted_root: Path, exe_name: str, target_bin: Path, log_fn, progress_cb=None):
         try:
             exe_path = None
@@ -2016,120 +1674,8 @@ class AutoTrackerGUI(tk.Tk):
         self._log_install(f"OS: {OS_NAME} {osr.get('NAME','')} {osr.get('VERSION','')}")
         has_cuda = detect_cuda(); self._log_install(f"CUDA erkannt: {'Ja' if has_cuda else 'Nein'}")
         pm = _detect_pkg_manager() if OS_NAME == "Linux" else None
-        self._skip_pkg_install = False  # Linux: ggf. durch AUR-Helper bereits erledigt.
-        self._pacman_helper_used = None
+        self._batched_pkg_install = False
         top = Path(self.top_dir_var.get())
-        # --- Batched package installation (Linux) ---
-        # Sammle alle benötigten Pakete entsprechend der Auswahl und installiere sie in EINEM Rutsch.
-        if OS_NAME == "Linux":
-            all_pkgs = []
-
-            # Optional: CUDA Toolkit (nur wenn angehakt)
-            if getattr(self, "try_install_cuda_var", None) and self.try_install_cuda_var.get():
-                if pm == "apt":
-                    all_pkgs += ["nvidia-cuda-toolkit"]
-                elif pm == "dnf":
-                    all_pkgs += ["cuda", "cuda-toolkit"]
-                elif pm == "zypper":
-                    all_pkgs += ["cuda"]
-                elif pm == "pacman":
-                    all_pkgs += ["cuda"]
-                elif pm == "apk":
-                    # Alpine: kein offizielles CUDA-Paket
-                    pass
-
-            # ffmpeg (falls ausgewählt)
-            if getattr(self, "inst_ffmpeg", None) and self.inst_ffmpeg.get():
-                all_pkgs += ["ffmpeg"]
-
-            # COLMAP Build-Abhängigkeiten (falls ausgewählt)
-            if getattr(self, "inst_colmap", None) and self.inst_colmap.get():
-                if pm == "apt":
-                    colmap_base = ["build-essential","cmake","git","libboost-all-dev","libeigen3-dev","libsuitesparse-dev","libceres-dev",
-                                   "libfreeimage-dev","libgoogle-glog-dev","libgflags-dev","qtbase5-dev","libqt5opengl5-dev","ninja-build"]
-                elif pm == "dnf":
-                    colmap_base = ["gcc-c++","cmake","git","boost-devel","eigen3-devel","suitesparse-devel","ceres-solver-devel",
-                                   "freeimage-devel","glog-devel","gflags-devel","qt5-qtbase-devel","qt5-qtopengl-devel","ninja-build"]
-                elif pm == "zypper":
-                    colmap_base = ["gcc-c++","cmake","git","libboost-devel","eigen3-devel","suitesparse-devel","ceres-solver-devel",
-                                   "freeimage-devel","glog-devel","gflags-devel","libqt5-qtbase-devel","libqt5-qtopengl-devel","ninja"]
-                elif pm == "pacman":
-                    colmap_base = ["base-devel","cmake","git","boost","eigen","suitesparse","ceres-solver","freeimage","google-glog","gflags","qt5-base","ninja"]
-                elif pm == "apk":
-                    colmap_base = ["build-base","cmake","git","boost-dev","eigen-dev","suitesparse-dev","ceres-dev",
-                                   "freeimage-dev","glog-dev","gflags-dev","qt5-qtbase-dev","ninja"]
-                else:
-                    colmap_base = []
-                all_pkgs += colmap_base + self._extras_for(pm, "colmap")
-
-            # GLOMAP Build-Abhängigkeiten (falls ausgewählt)
-            if getattr(self, "inst_glomap", None) and self.inst_glomap.get():
-                if pm == "apt":
-                    glomap_base = ["build-essential","cmake","git","libboost-all-dev","libeigen3-dev","libsuitesparse-dev","libceres-dev",
-                                   "libgoogle-glog-dev","libgflags-dev","ninja-build"]
-                elif pm == "dnf":
-                    glomap_base = ["gcc-c++","cmake","git","boost-devel","eigen3-devel","suitesparse-devel","ceres-solver-devel",
-                                   "glog-devel","gflags-devel","ninja-build"]
-                elif pm == "zypper":
-                    glomap_base = ["gcc-c++","cmake","git","libboost-devel","eigen3-devel","suitesparse-devel","ceres-solver-devel",
-                                   "glog-devel","gflags-devel","ninja"]
-                elif pm == "pacman":
-                    glomap_base = ["base-devel","cmake","git","boost","eigen","suitesparse","ceres-solver","google-glog","gflags","ninja"]
-                elif pm == "apk":
-                    glomap_base = ["build-base","cmake","git","boost-dev","eigen-dev","suitesparse-dev","ceres-dev","glog-dev","gflags-dev","ninja"]
-                else:
-                    glomap_base = []
-                all_pkgs += glomap_base + self._extras_for(pm, "glomap")
-
-            # Deduplicate, Reihenfolge bewahren
-            all_pkgs = _unique_preserve_order(all_pkgs)
-
-            if all_pkgs:
-                combined_pkgs = list(all_pkgs)
-                pending_repo = []
-                if pm == "pacman":
-                    # Sammelmodus: ermittelt fehlende Repo-Pakete (z. B. base-devel/git) für einen gemeinsamen Lauf.
-                    self._pacman_collect_only = True
-                    try:
-                        if not self._ensure_pacman_repo_packages(pm, combined_pkgs):
-                            return
-                        pending_repo = list(getattr(self, "_pending_pacman_repo_packages", []))
-                    finally:
-                        self._pacman_collect_only = False
-                    if pending_repo:
-                        combined_pkgs = _unique_preserve_order(combined_pkgs + pending_repo)
-                    # Standardlauf: validiert Repo-Pakete erneut mit aktivierter Automatisierung.
-                    if not self._ensure_pacman_repo_packages(pm, combined_pkgs):
-                        return
-                    if pending_repo:
-                        self._pending_pacman_repo_packages = []
-                else:
-                    if not self._ensure_pacman_repo_packages(pm, combined_pkgs):
-                        return
-                self._log_install("Installiere Pakete gesammelt: " + " ".join(combined_pkgs))
-                skip_pkg_install = bool(getattr(self, "_skip_pkg_install", False))
-                helper_used = getattr(self, "_pacman_helper_used", None)
-                if skip_pkg_install:
-                    helper_msg = helper_used or "den AUR-Helper"
-                    self._log_install(
-                        f"[pacman] Pakete bereits über {helper_msg} installiert – überspringe zusätzlichen pacman-Lauf."
-                    )
-                    code = 0
-                    self._skip_pkg_install = False
-                    self._pacman_helper_used = None
-                else:
-                    code = pkg_install(pm, combined_pkgs, self._log_install)
-                if code != 0:
-                    self._log_install("[pkg] Paketinstallation fehlgeschlagen – Installer abgebrochen.")
-                    return
-                if pm == "pacman":
-                    if not self._ensure_pacman_repo_packages(pm, combined_pkgs):
-                        return
-                self._batched_pkg_install = True
-            else:
-                self._log_install("Keine systemweiten Pakete erforderlich.")
-
-
 
         if OS_NAME == "Windows":
             success = True
@@ -2328,8 +1874,6 @@ class AutoTrackerGUI(tk.Tk):
                 pkgs.update(self._extras_for(pm, "glomap"))
             if pkgs and not getattr(self, "_batched_pkg_install", False):
                 self._log_install("Paketabhängigkeiten gesammelt – einmaliger Paketmanager-Lauf …")
-                if not self._ensure_pacman_repo_packages(pm, pkgs):
-                    return
                 pkg_install(pm, sorted(pkgs), self._log_install)
                 self._batched_pkg_install = True
             else:
@@ -2403,8 +1947,6 @@ class AutoTrackerGUI(tk.Tk):
                                  "sqlite-dev","flann-dev","glew-dev","freeimage-dev"])
         if pkgs and not getattr(self, "_batched_pkg_install", False):
             self._log_install("Paketabhängigkeiten gesammelt – führe Paketmanager einmalig aus …")
-            if not self._ensure_pacman_repo_packages(pm, pkgs):
-                return
             pkg_install(pm, sorted(pkgs), self._log_install)
         # ===== Ende Batch-Install =====
         if getattr(self, "try_install_cuda_var", None) and self.try_install_cuda_var.get():
@@ -2416,16 +1958,12 @@ class AutoTrackerGUI(tk.Tk):
             if cuda_pkgs:
                 self._log_install(f"Versuche CUDA Toolkit zu installieren: {' '.join(cuda_pkgs)}")
                 if not getattr(self, "_batched_pkg_install", False):
-                    if not self._ensure_pacman_repo_packages(pm, cuda_pkgs):
-                        return
                     pkg_install(pm, cuda_pkgs, self._log_install)
 
         if getattr(self, "inst_ffmpeg", None) and self.inst_ffmpeg.get():
             self._log_install("ffmpeg Installation über Paketmanager…")
             code = 0
             if not getattr(self, "_batched_pkg_install", False):
-                if not self._ensure_pacman_repo_packages(pm, ["ffmpeg"]):
-                    return
                 code = pkg_install(pm, ["ffmpeg"], self._log_install)
             if code == 0:
                 path = which_first(["ffmpeg"]); self._log_install(f"ffmpeg installiert. Pfad: {path or 'nicht im PATH gefunden'}")
@@ -2451,8 +1989,6 @@ class AutoTrackerGUI(tk.Tk):
             else:
                 base = []
             if base and not getattr(self, "_batched_pkg_install", False):
-                if not self._ensure_pacman_repo_packages(pm, base):
-                    return
                 pkg_install(pm, base, self._log_install)
             colmap_url = self.colmap_url_var.get().strip() if hasattr(self, "colmap_url_var") else ""
             if not colmap_url:
@@ -2609,8 +2145,6 @@ class AutoTrackerGUI(tk.Tk):
             else:
                 base = []
             if base and not getattr(self, "_batched_pkg_install", False):
-                if not self._ensure_pacman_repo_packages(pm, base):
-                    return
                 pkg_install(pm, base, self._log_install)
             glomap_url = self.glomap_url_var.get().strip() if hasattr(self, "glomap_url_var") else ""
             if not glomap_url:
