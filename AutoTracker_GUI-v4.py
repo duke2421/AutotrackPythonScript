@@ -393,6 +393,81 @@ def _tk_install_command(pm):
     if pm == "apk": return "apk add --no-cache tcl tk"
     return None
 
+_ARCH_IS_LIKE = None
+_ARCH_ASKPASS_SCRIPT = None
+
+def _is_arch_like():
+    global _ARCH_IS_LIKE
+    if _ARCH_IS_LIKE is not None:
+        return _ARCH_IS_LIKE
+    data = _read_os_release()
+    tokens = []
+    for key in ("ID", "ID_LIKE", "NAME", "PRETTY_NAME"):
+        value = data.get(key)
+        if not value:
+            continue
+        value = value.replace("/", " ").replace(",", " ")
+        tokens.extend(part.strip().lower() for part in value.split())
+    needles = {"arch", "archlinux", "cachyos", "cachy"}
+    _ARCH_IS_LIKE = any(token in needles for token in tokens)
+    return _ARCH_IS_LIKE
+
+def _ensure_arch_askpass_script():
+    global _ARCH_ASKPASS_SCRIPT
+    if _ARCH_ASKPASS_SCRIPT:
+        path = Path(_ARCH_ASKPASS_SCRIPT)
+        if path.exists():
+            return path
+    script_text = (
+        "#!/usr/bin/env python3\n"
+        "import sys\n"
+        "try:\n"
+        "    import tkinter as tk\n"
+        "    from tkinter import simpledialog\n"
+        "except Exception:\n"
+        "    sys.stderr.write('tkinter askpass helper failed\\n')\n"
+        "    sys.exit(1)\n"
+        "root = tk.Tk()\n"
+        "root.withdraw()\n"
+        "prompt = sys.argv[1] if len(sys.argv) > 1 else 'sudo password:'\n"
+        "answer = simpledialog.askstring('Administrator-Berechtigung', prompt, show='*')\n"
+        "if answer is None:\n"
+        "    root.destroy()\n"
+        "    sys.exit(1)\n"
+        "root.destroy()\n"
+        "sys.stdout.write(answer + '\\n')\n"
+        "sys.stdout.flush()\n"
+    )
+    try:
+        tmp_dir = Path(tempfile.gettempdir())
+        tmp_dir.mkdir(parents=True, exist_ok=True)
+        askpass_path = tmp_dir / "autotracker_sudo_askpass.py"
+        askpass_path.write_text(script_text, encoding="utf-8")
+        try:
+            askpass_path.chmod(0o700)
+        except Exception:
+            pass
+        _ARCH_ASKPASS_SCRIPT = str(askpass_path)
+        return askpass_path
+    except Exception:
+        return None
+
+def _prepare_arch_askpass_env(env=None):
+    if not _is_arch_like():
+        return None
+    if not (os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY")):
+        return None
+    askpass_path = _ensure_arch_askpass_script()
+    if not askpass_path:
+        return None
+    target_env = os.environ if env is None else env
+    target_env["SUDO_ASKPASS"] = str(askpass_path)
+    for key in ("DISPLAY", "WAYLAND_DISPLAY", "XAUTHORITY", "DBUS_SESSION_BUS_ADDRESS"):
+        val = os.environ.get(key)
+        if val and key not in target_env:
+            target_env[key] = val
+    return str(askpass_path)
+
 def _sudo_wrap(cmd):
     """Return escalated command list or None when no graphical polkit is available."""
     if OS_NAME == "Linux":
@@ -407,6 +482,8 @@ def _sudo_wrap(cmd):
                 if val:
                     env_args.append(f"{key}={val}")
             return [pkexec, *env_args, "bash", "-lc", cmd]
+        if shutil.which("sudo") and _prepare_arch_askpass_env():
+            return ["sudo", "-A", "bash", "-lc", cmd]
         return None  # no graphical helper detected -> caller must instruct manual install
     if shutil.which("sudo"):
         return ["sudo", "bash", "-lc", cmd]
@@ -1575,12 +1652,23 @@ class AutoTrackerGUI(tk.Tk):
                 )
                 # Kopie der Umgebung erlaubt es, Polkit-Variablen nur für yay/paru zu setzen.
                 env = os.environ.copy()
-                if shutil.which("pkexec") and (os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY")):
+                pkexec_available = shutil.which("pkexec") and (
+                    os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY")
+                )
+                if pkexec_available:
                     # Sobald eine grafische Session läuft, sollen yay/paru selbst pkexec nutzen.
                     if helper_name.lower() == "paru":
                         env["PARU_SUDO"] = "pkexec"
                     elif helper_name.lower() == "yay":
                         env["YAY_SUDO"] = "pkexec"
+                else:
+                    askpass_used = _prepare_arch_askpass_env(env)
+                    if askpass_used and shutil.which("sudo"):
+                        helper_lower = helper_name.lower()
+                        if helper_lower == "paru" and "PARU_SUDO" not in env:
+                            env["PARU_SUDO"] = "sudo --askpass"
+                        elif helper_lower == "yay" and "YAY_SUDO" not in env:
+                            env["YAY_SUDO"] = "sudo --askpass"
 
                 base_cmd = cmd.copy()
                 pkg_arg_index = len(base_cmd) - len(missing)
