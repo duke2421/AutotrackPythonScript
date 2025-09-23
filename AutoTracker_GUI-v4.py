@@ -1948,11 +1948,15 @@ class AutoTrackerGUI(tk.Tk):
                     try:
                         if not self._ensure_pacman_repo_packages(pm, combined_pkgs):
                             return
-                        pending_repo = getattr(self, "_pending_pacman_repo_packages", [])
+                        pending_repo = list(getattr(self, "_pending_pacman_repo_packages", []))
                     finally:
                         self._pacman_collect_only = False
                     if pending_repo:
                         combined_pkgs = _unique_preserve_order(combined_pkgs + pending_repo)
+                    # Standardlauf: validiert Repo-Pakete erneut mit aktivierter Automatisierung.
+                    if not self._ensure_pacman_repo_packages(pm, combined_pkgs):
+                        return
+                    if pending_repo:
                         self._pending_pacman_repo_packages = []
                 else:
                     if not self._ensure_pacman_repo_packages(pm, combined_pkgs):
