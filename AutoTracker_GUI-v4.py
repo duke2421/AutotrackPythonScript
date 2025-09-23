@@ -1618,6 +1618,7 @@ class AutoTrackerGUI(tk.Tk):
             aur_helper = which_first(["yay", "paru"])  # finde verfügbaren AUR-Helper für eine mögliche Automatisierung
             if aur_helper and self._ask_aur_helper_permission(aur_helper, missing):
                 helper_name = Path(aur_helper).name
+                helper_lower = helper_name.lower()
                 cmd = [aur_helper, "-S", "--needed", "--noconfirm", "--skipreview"]
                 # Unterdrücke Review-/Diff-Abfragen und halte sudo aktiv, falls der Helper dies unterstützt.
                 supports_sudoloop = False
@@ -1635,6 +1636,13 @@ class AutoTrackerGUI(tk.Tk):
                     supports_sudoloop = "--sudoloop" in help_text
                 if supports_sudoloop:
                     cmd.append("--sudoloop")
+                env = os.environ.copy()
+                askpass_used = None
+                if helper_lower == "paru":
+                    askpass_used = _prepare_arch_askpass_env(env)
+                    if askpass_used:
+                        # Paru benötigt explizite sudo-Flags, damit sudo unser Tk-Askpass-Skript nutzt.
+                        cmd.append("--sudoflags=--askpass")
                 cmd.extend(missing)
                 self._log_install(f"[pacman] Starte {helper_name} für fehlende Pakete: {' '.join(missing)}")
                 # Automatisiere Standardantworten auf yay/paru-Rückfragen (Providerwahl, Review, PKGBUILD-Bearbeitung).
@@ -1653,20 +1661,17 @@ class AutoTrackerGUI(tk.Tk):
                     ("select a number", "1\n"),
                 )
                 # Kopie der Umgebung erlaubt es, Polkit-Variablen nur für yay/paru zu setzen.
-                env = os.environ.copy()
                 pkexec_available = shutil.which("pkexec") and (
                     os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY")
                 )
                 if pkexec_available:
-                    # Sobald eine grafische Session läuft, sollen yay/paru selbst pkexec nutzen.
-                    if helper_name.lower() == "paru":
-                        env["PARU_SUDO"] = "pkexec"
-                    elif helper_name.lower() == "yay":
+                    # Sobald eine grafische Session läuft, sollen yay selbst pkexec nutzen.
+                    if helper_lower == "yay":
                         env["YAY_SUDO"] = "pkexec"
                 else:
-                    askpass_used = _prepare_arch_askpass_env(env)
+                    if askpass_used is None:
+                        askpass_used = _prepare_arch_askpass_env(env)
                     if askpass_used and shutil.which("sudo"):
-                        helper_lower = helper_name.lower()
                         if helper_lower == "paru" and "PARU_SUDO" not in env:
                             env["PARU_SUDO"] = "sudo --askpass"
                         elif helper_lower == "yay" and "YAY_SUDO" not in env:
